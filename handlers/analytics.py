@@ -1,15 +1,21 @@
+from datetime import datetime, timedelta
 from html import escape
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
+from config.admins import has_admin_panel, is_admin
 from config.challenges import get_all_challenges, get_challenge
 from database import (
     accept_challenge,
     decline_challenge,
     get_accepted_challenges,
+    get_reviewed_challenges,
     get_submitted_challenges,
     get_user_challenge_statuses,
+    get_user_awarded_points,
+    get_user_review_summary,
     mark_challenge_submitted,
 )
 from keyboards.all_keyboards import (
@@ -20,13 +26,27 @@ from keyboards.all_keyboards import (
     get_report_confirmation_keyboard,
     get_tasks_keyboard,
 )
+from utils.admin_panel import send_admin_panel_prompt
 
 router = Router()
 
 # Временное хранилище выбранных заданий для отчёта
 pending_reports: dict[int, str] = {}
 # Временное хранилище данных отправленного файла до подтверждения
-pending_report_payloads: dict[int, tuple[str, str | None, str]] = {}
+pending_report_payloads: dict[int, tuple[str, str | None, str, str | None]] = {}
+
+
+@router.message(Command("admin"))
+async def show_admin_panel(message: Message):
+    """Показать кнопку админ-панели по запросу."""
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        await message.answer("Эта команда доступна только администраторам.")
+        return
+    if not has_admin_panel():
+        await message.answer("Админ-панель пока не настроена.")
+        return
+    await send_admin_panel_prompt(message, user_id)
 
 
 @router.message(F.text == "🏠 Главное меню")
@@ -228,7 +248,7 @@ async def handle_photo_report(message: Message):
     challenge = get_challenge(challenge_id)
     photo_file_id = message.photo[-1].file_id
     caption = message.caption if message.caption else None
-    pending_report_payloads[user_id] = (photo_file_id, caption, "photo")
+    pending_report_payloads[user_id] = (photo_file_id, caption, "photo", None)
 
     title_text = escape(challenge["title"]) if challenge else escape(challenge_id)
     if caption:
@@ -263,8 +283,9 @@ async def handle_document_report(message: Message):
 
     challenge = get_challenge(challenge_id)
     document_file_id = message.document.file_id
+    document_name = message.document.file_name or "Файл"
     caption = message.caption if message.caption else None
-    pending_report_payloads[user_id] = (document_file_id, caption, "document")
+    pending_report_payloads[user_id] = (document_file_id, caption, "document", document_name)
 
     title_text = escape(challenge["title"]) if challenge else escape(challenge_id)
     if caption:
@@ -296,8 +317,15 @@ async def confirm_report(callback: CallbackQuery):
         await callback.answer("Нет отчёта для подтверждения.", show_alert=True)
         return
 
-    file_id, caption, _ = payload
-    submitted = mark_challenge_submitted(user_id, challenge_id, file_id, caption)
+    file_id, caption, attachment_type, attachment_name = payload
+    submitted = mark_challenge_submitted(
+        user_id,
+        challenge_id,
+        file_id,
+        caption,
+        attachment_type,
+        attachment_name,
+    )
     if not submitted:
         await callback.answer("Не удалось сохранить отчёт. Попробуй отправить снова.", show_alert=True)
         return
@@ -342,26 +370,81 @@ async def show_progress(message: Message):
     """Показать прогресс пользователя."""
     user_id = message.from_user.id
     accepted = get_accepted_challenges(user_id)
-    submitted = [challenge_id for challenge_id, *_ in get_submitted_challenges(user_id)]
+    pending_reports = get_submitted_challenges(user_id, only_pending=True)
+    summary = get_user_review_summary(user_id)
+    approved_count = summary.get('approved', 0)
+    rejected_count = summary.get('rejected', 0)
+    pending_count = summary.get('pending', len(pending_reports))
 
     challenges = get_all_challenges()
-    if submitted:
-        submitted_lines = "\n".join(
-            f"• {challenges[challenge_id]['title']}"
-            for challenge_id in submitted
-            if challenge_id in challenges
+    awarded = get_user_awarded_points(user_id)
+
+    def resolve_points_value(challenge_id: str, stored_points: int | None) -> int:
+        if stored_points is not None:
+            try:
+                return int(stored_points)
+            except (TypeError, ValueError):
+                return 0
+        cached = challenges.get(challenge_id)
+        details = cached or get_challenge(challenge_id)
+        if not details:
+            return 0
+        value = details.get("points_value")
+        if isinstance(value, int):
+            return value
+        points_field = details.get("points")
+        if isinstance(points_field, int):
+            return points_field
+        if isinstance(points_field, str):
+            digits = ''.join(ch for ch in points_field if ch.isdigit())
+            if digits:
+                try:
+                    return int(digits)
+                except ValueError:
+                    return 0
+        return 0
+
+    def get_week_start_msk() -> datetime:
+        now_msk = datetime.utcnow() + timedelta(hours=3)
+        start_date = now_msk.date() - timedelta(days=now_msk.weekday())
+        start_dt = datetime.combine(start_date, datetime.min.time()) + timedelta(minutes=1)
+        if now_msk < start_dt:
+            start_dt -= timedelta(days=7)
+        return start_dt
+
+    week_start = get_week_start_msk()
+    total_points = 0
+    weekly_points = 0
+    for challenge_id, points_value, reviewed_at in awarded:
+        points = resolve_points_value(challenge_id, points_value)
+        total_points += points
+        if reviewed_at:
+            try:
+                reviewed_dt = datetime.strptime(reviewed_at, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                reviewed_dt = None
+            if reviewed_dt and reviewed_dt >= week_start:
+                weekly_points += points
+
+    if pending_reports:
+        pending_lines = "\n".join(
+            f"• {challenges.get(challenge_id, {}).get('title', challenge_id)}"
+            for challenge_id, *_ in pending_reports
         )
-        submitted_text = f"⏳ Отчёты в обработке:\n{submitted_lines}"
+        pending_text = f"⏳ Отчёты в обработке ({pending_count}):\n{pending_lines}"
     else:
-        submitted_text = "⏳ Отчёты в обработке: нет"
+        pending_text = "⏳ Отчёты в обработке: нет"
 
     await message.answer_photo(
         photo=FSInputFile("images/progress_banner.jpg"),
         caption=(
             "📈 <b>Твой прогресс:</b>\n\n"
             f"📝 Принято заданий: {len(accepted)}\n"
-            f"{submitted_text}\n\n"
-            "🏆 Начисление баллов появится после проверки отчётов."
+            f"{pending_text}\n"
+            f"✅ Одобрено отчётов: {approved_count}\n"
+            f"❌ Отклонено отчётов: {rejected_count}\n\n"
+            f"🏅 Баллы за всё время: {total_points}\n"
+            f"📆 Баллы за неделю: {weekly_points} (сброс в 00:01 по Мск)\n"
         ),
         reply_markup=get_main_menu(),
     )
@@ -379,7 +462,7 @@ async def show_help(message: Message):
         "<b>3. Нужно ли что-то платить?</b>\n"
         "Нет, участие полностью бесплатное 💚\n\n"
         "<b>4. Не вижу новых заданий.</b>\n"
-        "Если все текущие челленджи выполнены, дождись обновления — мы пришлём новые!",
+        "Если все текущие челленджи выполнены, дождись обновления — мы пришлём новые!"
     )
     await message.answer_photo(
         photo=FSInputFile("images/help_banner.jpg"),

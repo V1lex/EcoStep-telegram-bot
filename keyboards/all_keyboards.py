@@ -5,6 +5,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 
@@ -102,5 +103,19 @@ def get_report_confirmation_keyboard():
                     callback_data="report_edit",
                 )
             ],
+        ]
+    )
+
+
+def get_admin_panel_keyboard(url: str):
+    """Inline-клавиатура для открытия админской mini app."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🛠 Открыть админ-панель",
+                    web_app=WebAppInfo(url=url),
+                )
+            ]
         ]
     )
