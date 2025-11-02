@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from aiogram import Bot
 from aiogram.types import Message
 from create_bot import dp, bot
 from handlers import start, analytics
 from database import init_db, register_user
+from utils.bot_commands import setup_bot_commands
 
 # Подключаем обработчики
 dp.include_router(start.router)
@@ -24,6 +24,7 @@ async def register_middleware(handler, event, data):
 async def main():
     # Инициализация базы данных
     init_db()
+    await setup_bot_commands(bot)
     
     # Подключаем middleware для регистрации
     dp.message.middleware(register_middleware)

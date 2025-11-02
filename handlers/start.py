@@ -1,7 +1,9 @@
 from aiogram import Router
 from aiogram.filters import CommandStart
-from aiogram.types import Message, FSInputFile
+from aiogram.types import FSInputFile, Message
+
 from keyboards.all_keyboards import get_main_menu
+from utils.admin_panel import send_admin_panel_prompt
 
 router = Router()
 
@@ -25,3 +27,4 @@ async def cmd_start(message: Message):
         caption=caption_text,
         reply_markup=get_main_menu()
     )
+    await send_admin_panel_prompt(message, user_id)
