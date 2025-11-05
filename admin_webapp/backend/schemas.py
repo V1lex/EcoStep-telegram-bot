@@ -25,6 +25,10 @@ class ChallengeCreateRequest(BaseModel):
     co2: str = Field(..., min_length=1, max_length=64)
 
 
+class ChallengeUpdateRequest(BaseModel):
+    active: bool
+
+
 class ChallengeResponse(BaseModel):
     challenge_id: str
     title: str

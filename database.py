@@ -513,19 +513,20 @@ def log_admin_action(admin_id: int, action: str, details: str | None = None):
     conn.close()
 
 
-def get_admin_logs(limit: int = 50) -> list[dict]:
+def get_admin_logs(limit: int | None = 50) -> list[dict]:
     """Получить последние действия админов."""
     conn = _get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        '''
+    query = '''
         SELECT id, admin_id, action, details, created_at
         FROM admin_logs
         ORDER BY created_at DESC
-        LIMIT ?
-        ''',
-        (limit,)
-    )
+    '''
+    params: tuple = ()
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (limit,)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [

@@ -199,6 +199,11 @@ button:not(.password-toggle):hover {
     margin: 0;
 }
 
+.placeholder {
+    margin: 0;
+    color: #90a6d8;
+}
+
 .report-card {
     border: 1px солid rgba(120, 150, 255, 0.25);
     border-radius: 16px;
@@ -274,4 +279,82 @@ button:not(.password-toggle):hover {
 
 .hidden {
     display: none;
+}
+
+.logs-container {
+    max-height: calc(1.9rem * 10);
+    height: calc(1.9rem * 10);
+    overflow-y: scroll;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #3f6bff rgba(18, 26, 45, 0.65);
+}
+
+.logs-container::-webkit-scrollbar {
+    width: 10px;
+}
+
+.logs-container::-webkit-scrollbar-track {
+    background: rgba(12, 20, 38, 0.8);
+    border-radius: 12px;
+}
+
+.logs-container::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #4a6bff 0%, #3aa0ff 100%);
+    border-radius: 12px;
+    border: 2px solid rgba(12, 20, 38, 0.9);
+}
+
+.logs-container::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #5173ff 0%, #48afff 100%);
+}
+
+#logs-list li {
+    margin: 4px 0;
+    line-height: 1.4;
+}
+
+.challenges-list {
+    display: grid;
+    gap: 16px;
+}
+
+.challenge-card {
+    border: 1px solid rgba(120, 150, 255, 0.25);
+    border-radius: 16px;
+    padding: 18px;
+    background: rgba(20, 30, 48, 0.78);
+    box-shadow: 0 10px 26px rgba(4, 8, 20, 0.28);
+}
+
+.challenge-card header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    color: #d9e4ff;
+    margin-bottom: 12px;
+}
+
+.challenge-card header span {
+    font-size: 0.85rem;
+    color: #86b7ff;
+}
+
+.challenge-card.inactive {
+    opacity: 0.65;
+}
+
+.challenge-card p {
+    margin: 6px 0;
+    color: #c8d8ff;
+}
+
+.challenge-card .meta {
+    font-size: 0.9rem;
+    color: #90a6d8;
+}
+
+.challenge-card .actions {
+    margin-top: 14px;
 }
