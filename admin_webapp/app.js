@@ -194,6 +194,14 @@ function renderAdminPanel() {
 
             <div class="panel-block">
                 <div class="panel-header">
+                    <h3>Кастомные челленджи</h3>
+                    <button type="button" id="refresh-challenges" class="secondary">Обновить</button>
+                </div>
+                <div id="challenges-list" class="list challenges-list"></div>
+            </div>
+
+            <div class="panel-block">
+                <div class="panel-header">
                     <h3>Отчёты на проверку</h3>
                     <button type="button" id="refresh-reports" class="secondary">Обновить</button>
                 </div>
@@ -205,7 +213,9 @@ function renderAdminPanel() {
                     <h3>Лог действий</h3>
                     <button type="button" id="refresh-logs" class="secondary">Обновить</button>
                 </div>
-                <ul id="logs-list" class="list"></ul>
+                <div class="logs-container">
+                    <ul id="logs-list" class="list"></ul>
+                </div>
             </div>
         </section>
     `;
@@ -214,9 +224,11 @@ function renderAdminPanel() {
     document.getElementById("broadcast-form").addEventListener("submit", handleBroadcast);
     document.getElementById("challenge-form").addEventListener("submit", handleAddChallenge);
     document.getElementById("refresh-reports").addEventListener("click", loadPendingReports);
+    document.getElementById("refresh-challenges").addEventListener("click", loadChallenges);
     document.getElementById("refresh-logs").addEventListener("click", loadLogs);
 
     loadPendingReports();
+    loadChallenges();
     loadLogs();
 }
 
@@ -272,8 +284,70 @@ async function handleAddChallenge(event) {
         showMessage("Задание добавлено и доступно пользователям.");
         document.getElementById("challenge-form").reset();
         document.getElementById("challenge-points").value = "5";
+        await loadChallenges();
     } catch (error) {
         showMessage(error.message);
+    }
+}
+
+async function loadChallenges() {
+    const container = document.getElementById("challenges-list");
+    if (!container) {
+        return;
+    }
+    container.textContent = "Загрузка...";
+    try {
+        const challenges = await apiFetch("/challenges");
+        const custom = challenges.filter((challenge) => challenge.source === "custom");
+        if (!custom.length) {
+            container.innerHTML = "<p class=\"placeholder\">Нет созданных кастомных челленджей.</p>";
+            return;
+        }
+        container.innerHTML = custom
+            .map((challenge) => {
+                const statusLabel = challenge.active ? "Активно" : "Отключено";
+                const actionLabel = challenge.active ? "Убрать" : "Вернуть";
+                const actionType = challenge.active ? "deactivate" : "activate";
+                return `
+                    <article class="challenge-card ${challenge.active ? "" : "inactive"}" data-id="${challenge.challenge_id}">
+                        <header>
+                            <strong>${challenge.title}</strong>
+                            <span>${statusLabel}</span>
+                        </header>
+                        <p>${challenge.description}</p>
+                        <p class="meta">Баллы: ${challenge.points} • CO₂: ${challenge.co2}</p>
+                        <div class="actions">
+                            <button type="button" data-action="${actionType}">${actionLabel}</button>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+        container.querySelectorAll("button[data-action]").forEach((button) => {
+            button.addEventListener("click", async (event) => {
+                const card = event.target.closest(".challenge-card");
+                const challengeId = card.dataset.id;
+                const isDeactivate = event.target.dataset.action === "deactivate";
+                if (isDeactivate) {
+                    const confirmed = confirm("Убрать задание из списка доступных?");
+                    if (!confirmed) {
+                        return;
+                    }
+                }
+                try {
+                    await apiFetch(`/challenges/${encodeURIComponent(challengeId)}`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ active: !isDeactivate }),
+                    });
+                    showMessage(isDeactivate ? "Задание скрыто." : "Задание снова доступно.");
+                    await loadChallenges();
+                } catch (error) {
+                    showMessage(error.message);
+                }
+            });
+        });
+    } catch (error) {
+        container.textContent = error.message;
     }
 }
 
@@ -330,9 +404,13 @@ async function loadPendingReports() {
                 const userId = Number(card.dataset.user);
                 const challengeId = card.dataset.challenge;
                 const decision = event.target.dataset.action === "approve" ? "approved" : "rejected";
-                let comment = "";
+                let comment = null;
                 if (decision === "rejected") {
-                    comment = prompt("Укажите причину отклонения (необязательно):") || "";
+                    const input = prompt("Укажите причину отклонения (необязательно):", "");
+                    if (input === null) {
+                        return;
+                    }
+                    comment = input.trim();
                 }
                 try {
                     await apiFetch("/reports/resolve", {
@@ -341,7 +419,7 @@ async function loadPendingReports() {
                             user_id: userId,
                             challenge_id: challengeId,
                             decision,
-                            comment: comment.trim() || null,
+                            comment: comment && comment.length ? comment : null,
                         }),
                     });
                     showMessage("Отчёт обработан.");

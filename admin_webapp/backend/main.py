@@ -19,6 +19,7 @@ from admin_webapp.backend.schemas import (
     BroadcastRequest,
     ChallengeCreateRequest,
     ChallengeResponse,
+    ChallengeUpdateRequest,
     LoginRequest,
     LoginResponse,
     ReportActionRequest,
@@ -37,9 +38,11 @@ from database import (
     fetch_custom_challenges,
     get_admin_logs,
     get_all_user_ids,
+    get_custom_challenge,
     get_pending_reports,
     init_db,
     log_admin_action,
+    set_custom_challenge_active,
     update_report_review,
 )
 
@@ -135,6 +138,8 @@ def get_app() -> FastAPI:
         custom = fetch_custom_challenges(active_only=False)
         response: list[ChallengeResponse] = []
         for challenge_id, data in challenges.items():
+            if data.get("source") == "custom":
+                continue
             response.append(
                 ChallengeResponse(
                     challenge_id=challenge_id,
@@ -184,6 +189,50 @@ def get_app() -> FastAPI:
             co2=payload.co2,
             source="custom",
             active=True,
+        )
+
+    @api_router.patch("/challenges/{challenge_id}", response_model=ChallengeResponse)
+    async def update_challenge(
+        challenge_id: str,
+        payload: ChallengeUpdateRequest,
+        admin_id: int = Depends(current_admin),
+    ):
+        challenge = get_custom_challenge(challenge_id)
+        if not challenge:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Задание не найдено или недоступно для изменения.",
+            )
+
+        updated = set_custom_challenge_active(challenge_id, payload.active)
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не удалось обновить состояние задания.",
+            )
+
+        refreshed = get_custom_challenge(challenge_id)
+        if not refreshed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Задание не найдено после обновления.",
+            )
+
+        action = "activate_challenge" if payload.active else "deactivate_challenge"
+        log_admin_action(
+            admin_id,
+            action,
+            f"{challenge_id}: {refreshed['title']}",
+        )
+
+        return ChallengeResponse(
+            challenge_id=refreshed["challenge_id"],
+            title=refreshed["title"],
+            description=refreshed["description"],
+            points=int(refreshed["points"]),
+            co2=str(refreshed["co2"]),
+            source="custom",
+            active=bool(refreshed["active"]),
         )
 
     @api_router.post("/broadcast")
@@ -297,7 +346,7 @@ def get_app() -> FastAPI:
 
     @api_router.get("/logs", response_model=list[AdminLogEntry])
     async def admin_logs(_: int = Depends(current_admin)):
-        logs = get_admin_logs(limit=100)
+        logs = get_admin_logs(limit=None)
         return [
             AdminLogEntry(
                 id=entry["id"],
