@@ -72,6 +72,8 @@ def init_db():
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN attachment_type TEXT")
     if 'attachment_name' not in existing_columns:
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN attachment_name TEXT")
+    if 'file_path' not in existing_columns:
+        cursor.execute("ALTER TABLE user_challenges ADD COLUMN file_path TEXT")
     if 'points_awarded' not in existing_columns:
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN points_awarded INTEGER")
     cursor.execute(
@@ -184,6 +186,7 @@ def accept_challenge(user_id: int, challenge_id: str) -> bool:
                 accepted_at = ?,
                 submitted_at = NULL,
                 photo_file_id = NULL,
+                file_path = NULL,
                 caption = NULL,
                 review_status = 'pending',
                 review_comment = NULL,
@@ -234,7 +237,8 @@ def mark_challenge_submitted(
     file_id: str,
     caption: str | None = None,
     attachment_type: str = 'photo',
-    attachment_name: str | None = None
+    attachment_name: str | None = None,
+    file_path: str | None = None,
 ) -> bool:
     """Пометить челлендж как отправленный на проверку."""
     conn = _get_connection()
@@ -263,12 +267,13 @@ def mark_challenge_submitted(
             review_status = 'pending',
             review_comment = NULL,
             reviewed_at = NULL,
+            file_path = ?,
             attachment_type = ?,
             attachment_name = ?,
             points_awarded = NULL
         WHERE user_id = ? AND challenge_id = ?
         ''',
-        (submitted_at, file_id, caption, attachment_type, attachment_name, user_id, challenge_id)
+        (submitted_at, file_id, caption, file_path, attachment_type, attachment_name, user_id, challenge_id)
     )
     conn.commit()
     conn.close()
@@ -288,7 +293,7 @@ def get_user_challenges_by_status(
     cursor = conn.cursor()
     cursor.execute(
         f'''
-        SELECT challenge_id, status, submitted_at, photo_file_id, caption,
+        SELECT challenge_id, status, submitted_at, photo_file_id, file_path, caption,
                review_status, review_comment, reviewed_at,
                attachment_type, attachment_name
         FROM user_challenges
@@ -307,7 +312,7 @@ def get_submitted_challenges(user_id: int, only_pending: bool = True) -> list[tu
     conn = _get_connection()
     cursor = conn.cursor()
     query = '''
-        SELECT challenge_id, status, submitted_at, photo_file_id, caption,
+        SELECT challenge_id, status, submitted_at, photo_file_id, file_path, caption,
                review_status, review_comment, reviewed_at,
                attachment_type, attachment_name
         FROM user_challenges
@@ -373,6 +378,7 @@ def clear_challenge_state(user_id: int, challenge_id: str):
         SET status = 'accepted',
             submitted_at = NULL,
             photo_file_id = NULL,
+            file_path = NULL,
             caption = NULL,
             review_status = 'pending',
             review_comment = NULL,
@@ -553,6 +559,7 @@ def get_pending_reports() -> list[dict]:
                uc.challenge_id,
                uc.submitted_at,
                uc.photo_file_id,
+               uc.file_path,
                uc.caption,
                uc.attachment_type,
                uc.attachment_name
@@ -573,9 +580,10 @@ def get_pending_reports() -> list[dict]:
             "challenge_id": row[3],
             "submitted_at": row[4],
             "photo_file_id": row[5],
-            "caption": row[6],
-            "attachment_type": row[7] or 'photo',
-            "attachment_name": row[8],
+            "file_path": row[6],
+            "caption": row[7],
+            "attachment_type": row[8] or 'photo',
+            "attachment_name": row[9],
         }
         for row in rows
     ]
@@ -620,6 +628,7 @@ def update_report_review(
                 accepted_at = NULL,
                 submitted_at = NULL,
                 photo_file_id = NULL,
+                file_path = NULL,
                 caption = NULL,
                 attachment_type = NULL,
                 attachment_name = NULL,

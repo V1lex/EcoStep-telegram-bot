@@ -50,14 +50,22 @@ security = HTTPBearer(auto_error=False)
 active_tokens: Dict[str, int] = {}
 
 
-async def build_file_url(file_id: Optional[str]) -> Optional[str]:
+async def build_file_url(
+    file_id: Optional[str],
+    stored_path: Optional[str] = None,
+) -> Optional[str]:
     if not file_id:
         return None
+    if stored_path:
+        return f"https://api.telegram.org/file/bot{bot.token}/{stored_path.lstrip('/')}"
     try:
         telegram_file = await bot.get_file(file_id)
     except Exception:
         return None
-    return f"https://api.telegram.org/file/bot{bot.token}/{telegram_file.file_path}"
+    file_path = getattr(telegram_file, "file_path", None)
+    if not file_path:
+        return None
+    return f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
 
 
 def get_app() -> FastAPI:
@@ -264,7 +272,7 @@ def get_app() -> FastAPI:
         for report in reports:
             details = challenges_cache.get(report["challenge_id"]) or get_challenge(report["challenge_id"])
             title = details["title"] if details else report["challenge_id"]
-            file_url = await build_file_url(report["photo_file_id"])
+            file_url = await build_file_url(report["photo_file_id"], report.get("file_path"))
             responses.append(
                 ReportResponse(
                     user_id=report["user_id"],

@@ -318,6 +318,14 @@ async def confirm_report(callback: CallbackQuery):
         return
 
     file_id, caption, attachment_type, attachment_name = payload
+    file_path: str | None = None
+    try:
+        file_info = await callback.bot.get_file(file_id)
+    except Exception:
+        file_path = None
+    else:
+        file_path = file_info.file_path
+
     submitted = mark_challenge_submitted(
         user_id,
         challenge_id,
@@ -325,6 +333,7 @@ async def confirm_report(callback: CallbackQuery):
         caption,
         attachment_type,
         attachment_name,
+        file_path=file_path,
     )
     if not submitted:
         await callback.answer("Не удалось сохранить отчёт. Попробуй отправить снова.", show_alert=True)
