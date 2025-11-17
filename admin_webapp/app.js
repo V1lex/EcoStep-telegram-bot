@@ -11,6 +11,17 @@ const state = {
     telegramUser: null,
 };
 
+const CHALLENGE_TEMPLATES = [
+    { id: 1, action: "Пешая прогулка/велопоездка вместо авто (5 км)", points: 10, co2: "1.1 кг CO₂" },
+    { id: 2, action: "Использование общественного транспорта вместо такси (10 км)", points: 15, co2: "1.5 - 1.7 кг CO₂" },
+    { id: 3, action: "Экономия 1 кВт*ч электроэнергии", points: 5, co2: "0.5 кг CO₂" },
+    { id: 4, action: "Сдача 1 кг макулатуры", points: 8, co2: "1.0 - 1.3 кг CO₂" },
+    { id: 5, action: "Правильная утилизация 1 кг пластика (ПЭТ)", points: 20, co2: "2.0 кг CO₂" },
+    { id: 6, action: "Пользуйся многоразовой бутылкой (отказ от 1 бутылки 0.5л)", points: 3, co2: "0.1 - 0.15 кг CO₂" },
+    { id: 7, action: "Экономия 100 литров горячей воды (60°C)", points: 30, co2: "3.0 - 3.5 кг CO₂" },
+    { id: 8, action: "Посадка 1 дерева", points: 50, co2: "Поглощает 12-25 кг CO₂/год" },
+];
+
 const telegram = window.Telegram?.WebApp;
 if (telegram) {
     telegram.ready();
@@ -56,6 +67,29 @@ function initPasswordToggles(container = document) {
             input.type = isHidden ? "text" : "password";
             button.textContent = isHidden ? "Скрыть" : "Показать";
         });
+    });
+}
+
+function setupChallengeTemplateSelector(form) {
+    const templateSelect = form.querySelector("#challenge-template");
+    const pointsInput = form.querySelector("#challenge-points");
+    const co2Input = form.querySelector("#challenge-co2");
+
+    if (!templateSelect || !pointsInput || !co2Input) return;
+
+    templateSelect.addEventListener("change", () => {
+        const templateId = Number(templateSelect.value);
+        if (!templateId) {
+            pointsInput.value = "";
+            co2Input.value = "";
+            return;
+        }
+
+        const template = CHALLENGE_TEMPLATES.find(t => t.id === templateId);
+        if (template) {
+            pointsInput.value = template.points;
+            co2Input.value = template.co2;
+        }
     });
 }
 
@@ -176,17 +210,25 @@ function renderAdminPanel() {
             <div class="panel-block">
                 <h3>Добавить челлендж</h3>
                 <form id="challenge-form">
-                    <label for="challenge-title">Название</label>
-                    <input id="challenge-title" type="text" placeholder="Например, Использовать многоразовую кружку" required>
+                    <label for="challenge-template">Выберите действие</label>
+                    <select id="challenge-template" required>
+                        <option value="">— Выберите из списка —</option>
+                        ${CHALLENGE_TEMPLATES.map(t => 
+                            `<option value="${t.id}">${t.action}</option>`
+                        ).join("")}
+                    </select>
+
+                    <label for="challenge-title">Название задания</label>
+                    <input id="challenge-title" type="text" placeholder="Например: Прогулка в парке" required>
 
                     <label for="challenge-description">Описание</label>
-                    <textarea id="challenge-description" rows="3" placeholder="Опишите условия челленджа" required></textarea>
+                    <textarea id="challenge-description" rows="3" placeholder="Опишите условия выполнения" required></textarea>
 
-                    <label for="challenge-points">Баллы</label>
-                    <input id="challenge-points" type="number" min="1" max="500" value="5" required>
+                    <label for="challenge-points">Баллы (автоматически)</label>
+                    <input id="challenge-points" type="number" min="1" max="500" readonly required>
 
-                    <label for="challenge-co2">Экономия CO₂</label>
-                    <input id="challenge-co2" type="text" placeholder="Например, 0.2 кг CO₂" required>
+                    <label for="challenge-co2">Экономия CO₂ (автоматически)</label>
+                    <input id="challenge-co2" type="text" readonly required>
 
                     <button type="submit">Добавить задание</button>
                 </form>
@@ -226,6 +268,11 @@ function renderAdminPanel() {
     document.getElementById("refresh-reports").addEventListener("click", loadPendingReports);
     document.getElementById("refresh-challenges").addEventListener("click", loadChallenges);
     document.getElementById("refresh-logs").addEventListener("click", loadLogs);
+
+    const challengeForm = document.getElementById("challenge-form");
+    if (challengeForm) {
+        setupChallengeTemplateSelector(challengeForm);
+    }
 
     loadPendingReports();
     loadChallenges();

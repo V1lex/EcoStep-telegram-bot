@@ -96,6 +96,8 @@ def init_db():
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN attachment_name TEXT")
     if 'points_awarded' not in existing_columns:
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN points_awarded INTEGER")
+    if 'co2_awarded' not in existing_columns:
+        cursor.execute("ALTER TABLE user_challenges ADD COLUMN co2_awarded REAL")
     cursor.execute(
         "UPDATE user_challenges SET review_status = COALESCE(review_status, 'pending')"
     )
@@ -889,20 +891,29 @@ def update_report_review(
     challenge_id: str,
     review_status: str,
     review_comment: str | None = None,
-    awarded_points: int | None = None
+    awarded_points: int | None = None,
+    awarded_co2: float | None = None  # ← НОВЫЙ ПАРАМЕТР
 ) -> bool:
     """Обновить статус проверки отчёта."""
     conn = _get_connection()
     cursor = conn.cursor()
     reviewed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    points_value = awarded_points if review_status == 'approved' else None
+    
+    if review_status == 'approved':
+        points_value = awarded_points
+        co2_value = awarded_co2
+    else:
+        points_value = None
+        co2_value = None
+        
     cursor.execute(
         '''
         UPDATE user_challenges
         SET review_status = ?,
             review_comment = ?,
             reviewed_at = ?,
-            points_awarded = ?
+            points_awarded = ?,
+            co2_awarded = ?
         WHERE user_id = ? AND challenge_id = ? AND status = 'submitted'
         ''',
         (
@@ -910,6 +921,7 @@ def update_report_review(
             review_comment,
             reviewed_at,
             points_value,
+            co2_value,
             user_id,
             challenge_id,
         )
@@ -926,7 +938,8 @@ def update_report_review(
                 caption = NULL,
                 attachment_type = NULL,
                 attachment_name = NULL,
-                points_awarded = NULL
+                points_awarded = NULL,
+                co2_awarded = NULL
             WHERE user_id = ? AND challenge_id = ?
             ''',
             (user_id, challenge_id)
@@ -960,13 +973,13 @@ def get_user_review_summary(user_id: int) -> dict[str, int]:
     return summary
 
 
-def get_user_awarded_points(user_id: int) -> list[tuple[str, int | None, str | None]]:
-    """Вернуть список одобренных отчётов с начисленными баллами."""
+def get_user_awarded_stats(user_id: int) -> list[tuple[str, int | None, float | None, str | None]]:
+    """Вернуть полную статистику по одобренным заданиям."""
     conn = _get_connection()
     cursor = conn.cursor()
     cursor.execute(
         '''
-        SELECT challenge_id, points_awarded, reviewed_at
+        SELECT challenge_id, points_awarded, co2_awarded, reviewed_at
         FROM user_challenges
         WHERE user_id = ? AND review_status = 'approved'
         ''',
@@ -993,3 +1006,18 @@ def get_user_challenge(user_id: int, challenge_id: str) -> tuple | None:
     row = cursor.fetchone()
     conn.close()
     return row
+def get_user_awarded_co2(user_id: int) -> list[tuple[str, float | None, str | None]]:
+    """Вернуть список одобренных отчётов с начисленным CO₂."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT challenge_id, co2_awarded, reviewed_at
+        FROM user_challenges
+        WHERE user_id = ? AND review_status = 'approved' AND co2_awarded IS NOT NULL
+        ''',
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows

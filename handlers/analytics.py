@@ -21,7 +21,7 @@ from database import (
     get_reviewed_challenges,
     get_submitted_challenges,
     get_user_challenge_statuses,
-    get_user_awarded_points,
+    get_user_awarded_stats,
     get_user_review_summary,
     get_users_by_ids,
     mark_challenge_submitted,
@@ -42,6 +42,19 @@ from keyboards.all_keyboards import (
     get_tasks_keyboard,
 )
 from utils.admin_panel import send_admin_panel_prompt
+import re
+
+def _parse_co2_value(co2_text: str) -> float | None:
+    """Извлекает первое число из строки вроде '~1.1 кг CO₂' → 1.1"""
+    if not co2_text:
+        return None
+    match = re.search(r"[\d.]+", co2_text)
+    if match:
+        try:
+            return float(match.group())
+        except ValueError:
+            return None
+    return None
 
 router = Router()
 
@@ -91,14 +104,26 @@ def _resolve_points_value(
     return 0
 
 
-def _calculate_user_points(user_id: int, challenges_cache: dict[str, dict]) -> tuple[int, int]:
-    awarded = get_user_awarded_points(user_id)
+def _calculate_user_stats(user_id: int, challenges_cache: dict[str, dict]) -> tuple[int, int, float]:
+    awarded = get_user_awarded_stats(user_id)
     week_start = _get_week_start_msk()
     total_points = 0
     weekly_points = 0
+    total_co2 = 0.0
+
     for challenge_id, points_value, reviewed_at in awarded:
+        # Баллы
         points = _resolve_points_value(challenge_id, points_value, challenges_cache)
         total_points += points
+
+        # CO₂
+        challenge = challenges_cache.get(challenge_id) or get_challenge(challenge_id)
+        co2_text = challenge.get("co2", "") if challenge else ""
+        co2_value = _parse_co2_value(co2_text)
+        if co2_value is not None:
+            total_co2 += co2_value
+
+        # Еженедельные баллы
         if reviewed_at:
             try:
                 reviewed_dt = datetime.strptime(reviewed_at, '%Y-%m-%d %H:%M:%S')
@@ -106,8 +131,8 @@ def _calculate_user_points(user_id: int, challenges_cache: dict[str, dict]) -> t
                 reviewed_dt = None
             if reviewed_dt and reviewed_dt >= week_start:
                 weekly_points += points
-    return total_points, weekly_points
 
+    return total_points, weekly_points, total_co2
 
 def _build_display_label(record: dict[str, Any] | None, fallback_id: int) -> str:
     if not record:
@@ -152,7 +177,7 @@ def _build_friends_panel(user_id: int) -> tuple[str, bool]:
     users_map = get_users_by_ids(participants)
     entries: list[dict[str, Any]] = []
     for participant_id in participants:
-        total_points, weekly_points = _calculate_user_points(participant_id, challenges_cache)
+        total_points, weekly_points, total_co2 = _calculate_user_stats(participant_id, challenges_cache)
         label = _build_display_label(users_map.get(participant_id), participant_id)
         entries.append(
             {
@@ -160,6 +185,7 @@ def _build_friends_panel(user_id: int) -> tuple[str, bool]:
                 "label": label,
                 "weekly": weekly_points,
                 "total": total_points,
+                "co2": total_co2,
             }
         )
 
@@ -547,7 +573,7 @@ async def show_progress(message: Message):
     pending_count = summary.get('pending', len(pending_submissions))
 
     challenges = get_all_challenges()
-    total_points, weekly_points = _calculate_user_points(user_id, challenges)
+    total_points, weekly_points, total_co2 = _calculate_user_stats(user_id, challenges)
 
     if pending_submissions:
         pending_lines = "\n".join(
@@ -568,6 +594,7 @@ async def show_progress(message: Message):
             f"❌ Отклонено отчётов: {rejected_count}\n\n"
             f"🏅 Баллы за всё время: {total_points}\n"
             f"📆 Баллы за неделю: {weekly_points} (сброс в 00:01 по Мск)\n"
+            f"🌱 Сэкономлено CO₂: {total_co2:.1f} кг\n"
         ),
         reply_markup=get_main_menu(),
     )
