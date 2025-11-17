@@ -154,7 +154,7 @@ async def accept_task(callback: CallbackQuery):
         f"✅ <b>{challenge['title']}</b>\n"
         "Задание добавлено во вкладку 📮 Отчёт.\n"
         "Когда выполнишь — выбери задание в разделе отчётов и отправь фото.",
-        reply_markup=get_back_button(),
+        reply_markup=get_main_menu(),
     )
     await callback.answer("Задание принято!")
 
