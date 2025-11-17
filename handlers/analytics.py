@@ -11,9 +11,12 @@ from config.challenges import get_all_challenges, get_challenge
 from database import (
     accept_challenge,
     add_friend,
+    create_friend_request,
     decline_challenge,
     find_user_by_username,
     get_accepted_challenges,
+    get_friend_ids,
+    get_friend_request,
     get_friends,
     get_reviewed_challenges,
     get_submitted_challenges,
@@ -23,6 +26,7 @@ from database import (
     get_users_by_ids,
     mark_challenge_submitted,
     remove_friend,
+    update_friend_request_status,
 )
 from keyboards.all_keyboards import (
     get_back_button,
@@ -31,6 +35,7 @@ from keyboards.all_keyboards import (
     get_friend_cancel_keyboard,
     get_friend_confirmation_keyboard,
     get_friend_remove_keyboard,
+    get_friend_request_keyboard,
     get_main_menu,
     get_report_challenges_keyboard,
     get_report_confirmation_keyboard,
@@ -179,6 +184,28 @@ def _friends_panel_payload(user_id: int):
     return text, keyboard
 
 
+def _get_user_label(user_id: int) -> str:
+    """Получить отображаемое имя пользователя."""
+    record = get_users_by_ids([user_id]).get(user_id)
+    return _build_display_label(record, user_id)
+
+
+async def _send_friend_request_prompt(bot, target_id: int, requester_label: str, request_id: int):
+    """Отправить уведомление о новой заявке в друзья."""
+    text = (
+        f"🤝 <b>{escape(requester_label)}</b> хочет добавить вас в друзья.\n"
+        "Примите или отклоните запрос ниже."
+    )
+    try:
+        await bot.send_message(
+            target_id,
+            text,
+            reply_markup=get_friend_request_keyboard(request_id),
+        )
+    except Exception:
+        pass
+
+
 @router.message(Command("admin"))
 async def show_admin_panel(message: Message):
     """Показать кнопку админ-панели по запросу."""
@@ -296,8 +323,7 @@ async def accept_task(callback: CallbackQuery):
     await callback.message.answer(
         f"✅ <b>{challenge['title']}</b>\n"
         "Задание добавлено во вкладку 📮 Отчёт.\n"
-        "Когда выполнишь — выбери задание в разделе отчётов и отправь фото.\n"
-        "🏠 Возвращаю тебя в главное меню.",
+        "Когда выполнишь — выбери задание в разделе отчётов и отправь фото.",
         reply_markup=get_main_menu(),
     )
     await callback.answer("Задание принято!")
@@ -653,15 +679,54 @@ async def confirm_friend_add(callback: CallbackQuery):
         await callback.answer("Нет кандидата для добавления.", show_alert=True)
         return
     friend_states.pop(user_id, None)
-    added = add_friend(user_id, friend_id)
-    result_text = "Друг добавлен!" if added else "Этот пользователь уже есть в списке друзей."
+    friend_record = state.get("friend_record") or {"user_id": friend_id}
+    friend_label = _build_display_label(friend_record, friend_id)
+    requester_label = _build_display_label(
+        {
+            "first_name": callback.from_user.first_name,
+            "username": callback.from_user.username,
+        },
+        user_id,
+    )
+    result = create_friend_request(user_id, friend_id)
+    status = result.get("status")
+
+    if status == "self":
+        response_text = "Нельзя добавить себя в друзья."
+        alert_text = "Это вы 🙂"
+    elif status == "already_friends":
+        response_text = "Этот пользователь уже есть в списке друзей."
+        alert_text = "Уже друзья"
+    elif status == "already_pending":
+        response_text = "Заявка уже отправлена. Ждите подтверждения."
+        alert_text = "Ждём подтверждения"
+    elif status == "auto_accepted":
+        response_text = f"{escape(friend_label)} уже оставил заявку — дружба подтверждена."
+        alert_text = "Заявка совпала"
+        try:
+            await callback.bot.send_message(
+                friend_id,
+                f"👍 <b>{escape(requester_label)}</b> принял(а) вашу заявку. Вы теперь друзья.",
+            )
+        except Exception:
+            pass
+    elif status == "created":
+        response_text = "Заявка отправлена. Мы сообщим, когда друг подтвердит."
+        alert_text = "Заявка отправлена"
+        request_id = result.get("request_id")
+        if request_id:
+            await _send_friend_request_prompt(callback.bot, friend_id, requester_label, request_id)
+    else:
+        response_text = "Не удалось отправить заявку. Попробуйте позже."
+        alert_text = "Ошибка"
+
     try:
-        await callback.message.edit_text(result_text, reply_markup=None)
+        await callback.message.edit_text(response_text, reply_markup=None)
     except Exception:
-        await callback.message.answer(result_text)
+        await callback.message.answer(response_text)
     text, keyboard = _friends_panel_payload(user_id)
     await callback.message.answer(text, reply_markup=keyboard)
-    await callback.answer()
+    await callback.answer(alert_text)
 
 
 @router.callback_query(F.data == "friends:cancel")
@@ -674,6 +739,97 @@ async def cancel_friend_flow(callback: CallbackQuery):
     except Exception:
         pass
     await callback.answer("Отменено")
+
+
+@router.callback_query(F.data.startswith("friends:req_accept:"))
+async def accept_friend_request_callback(callback: CallbackQuery):
+    """Подтвердить входящую заявку в друзья."""
+    user_id = callback.from_user.id
+    try:
+        request_id = int(callback.data.split(":")[-1])
+    except ValueError:
+        await callback.answer("Некорректная заявка.", show_alert=True)
+        return
+
+    request = get_friend_request(request_id)
+    if not request:
+        await callback.answer("Заявка не найдена.", show_alert=True)
+        return
+    if request["target_id"] != user_id:
+        await callback.answer("Эта заявка предназначена другому пользователю.", show_alert=True)
+        return
+    if request["status"] != "pending":
+        await callback.answer("Заявка уже обработана.", show_alert=True)
+        return
+
+    updated = update_friend_request_status(request_id, "accepted")
+    if not updated:
+        await callback.answer("Не удалось принять заявку.", show_alert=True)
+        return
+
+    add_friend(request["requester_id"], request["target_id"])
+    requester_label = _get_user_label(request["requester_id"])
+    target_label = _get_user_label(user_id)
+    try:
+        await callback.message.edit_text(
+            "Заявка принята. Вы добавлены в список друзей.",
+            reply_markup=None,
+        )
+    except Exception:
+        await callback.message.answer("Заявка принята. Вы добавлены в список друзей.")
+    text, keyboard = _friends_panel_payload(user_id)
+    await callback.message.answer(text, reply_markup=keyboard)
+    try:
+        await callback.bot.send_message(
+            request["requester_id"],
+            f"🎉 <b>{escape(target_label)}</b> принял(а) вашу заявку в друзья.",
+        )
+    except Exception:
+        pass
+    await callback.answer("Друг добавлен")
+
+
+@router.callback_query(F.data.startswith("friends:req_decline:"))
+async def decline_friend_request_callback(callback: CallbackQuery):
+    """Отклонить входящую заявку в друзья."""
+    user_id = callback.from_user.id
+    try:
+        request_id = int(callback.data.split(":")[-1])
+    except ValueError:
+        await callback.answer("Некорректная заявка.", show_alert=True)
+        return
+
+    request = get_friend_request(request_id)
+    if not request:
+        await callback.answer("Заявка не найдена.", show_alert=True)
+        return
+    if request["target_id"] != user_id:
+        await callback.answer("Эта заявка предназначена другому пользователю.", show_alert=True)
+        return
+    if request["status"] != "pending":
+        await callback.answer("Заявка уже обработана.", show_alert=True)
+        return
+
+    updated = update_friend_request_status(request_id, "declined")
+    if not updated:
+        await callback.answer("Не удалось отклонить заявку.", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_text("Заявка отклонена.", reply_markup=None)
+    except Exception:
+        await callback.message.answer("Заявка отклонена.")
+    text, keyboard = _friends_panel_payload(user_id)
+    await callback.message.answer(text, reply_markup=keyboard)
+    target_label = _get_user_label(user_id)
+    try:
+        await callback.bot.send_message(
+            request["requester_id"],
+            f"⚠️ <b>{escape(target_label)}</b> отклонил(а) вашу заявку в друзья.",
+        )
+    except Exception:
+        pass
+    await callback.answer("Заявка отклонена")
 
 
 @router.message(lambda message: friend_states.get(message.from_user.id, {}).get("stage") == "await_username")
@@ -711,14 +867,18 @@ async def collect_friend_username(message: Message):
         await message.answer("Этот пользователь уже есть в списке друзей.")
         return
 
-    friend_states[user_id] = {"stage": "confirm_add", "friend_id": friend_id}
     friend_record = {
         "user_id": friend_id,
         "username": candidate[1],
         "first_name": candidate[2],
     }
+    friend_states[user_id] = {
+        "stage": "confirm_add",
+        "friend_id": friend_id,
+        "friend_record": friend_record,
+    }
     label = escape(_build_display_label(friend_record, friend_id))
     await message.answer(
-        f"Добавить друга {label}?",
+        f"Отправить заявку {label}? Мы попросим друга подтвердить дружбу.",
         reply_markup=get_friend_confirmation_keyboard(friend_id),
     )
