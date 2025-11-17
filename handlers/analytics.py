@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from html import escape
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -9,18 +10,27 @@ from config.admins import has_admin_panel, is_admin
 from config.challenges import get_all_challenges, get_challenge
 from database import (
     accept_challenge,
+    add_friend,
     decline_challenge,
+    find_user_by_username,
     get_accepted_challenges,
+    get_friends,
     get_reviewed_challenges,
     get_submitted_challenges,
     get_user_challenge_statuses,
     get_user_awarded_points,
     get_user_review_summary,
+    get_users_by_ids,
     mark_challenge_submitted,
+    remove_friend,
 )
 from keyboards.all_keyboards import (
     get_back_button,
     get_challenge_actions_keyboard,
+    get_friend_actions_keyboard,
+    get_friend_cancel_keyboard,
+    get_friend_confirmation_keyboard,
+    get_friend_remove_keyboard,
     get_main_menu,
     get_report_challenges_keyboard,
     get_report_confirmation_keyboard,
@@ -34,6 +44,139 @@ router = Router()
 pending_reports: dict[int, str] = {}
 # Временное хранилище данных отправленного файла до подтверждения
 pending_report_payloads: dict[int, tuple[str, str | None, str, str | None]] = {}
+# Временное состояние диалогов в разделе друзей
+friend_states: dict[int, dict[str, Any]] = {}
+
+
+def _get_week_start_msk() -> datetime:
+    now_msk = datetime.utcnow() + timedelta(hours=3)
+    start_date = now_msk.date() - timedelta(days=now_msk.weekday())
+    start_dt = datetime.combine(start_date, datetime.min.time()) + timedelta(minutes=1)
+    if now_msk < start_dt:
+        start_dt -= timedelta(days=7)
+    return start_dt
+
+
+def _resolve_points_value(
+    challenge_id: str,
+    stored_points: int | None,
+    challenges_cache: dict[str, dict],
+) -> int:
+    if stored_points is not None:
+        try:
+            return int(stored_points)
+        except (TypeError, ValueError):
+            return 0
+    details = challenges_cache.get(challenge_id) or get_challenge(challenge_id)
+    if not details:
+        return 0
+    value = details.get("points_value")
+    if isinstance(value, int):
+        return value
+    points_field = details.get("points")
+    if isinstance(points_field, int):
+        return points_field
+    if isinstance(points_field, str):
+        digits = "".join(ch for ch in points_field if ch.isdigit())
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                return 0
+    return 0
+
+
+def _calculate_user_points(user_id: int, challenges_cache: dict[str, dict]) -> tuple[int, int]:
+    awarded = get_user_awarded_points(user_id)
+    week_start = _get_week_start_msk()
+    total_points = 0
+    weekly_points = 0
+    for challenge_id, points_value, reviewed_at in awarded:
+        points = _resolve_points_value(challenge_id, points_value, challenges_cache)
+        total_points += points
+        if reviewed_at:
+            try:
+                reviewed_dt = datetime.strptime(reviewed_at, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                reviewed_dt = None
+            if reviewed_dt and reviewed_dt >= week_start:
+                weekly_points += points
+    return total_points, weekly_points
+
+
+def _build_display_label(record: dict[str, Any] | None, fallback_id: int) -> str:
+    if not record:
+        return f"ID {fallback_id}"
+    first_name = (record.get("first_name") or "").strip()
+    username = (record.get("username") or "").strip()
+    if first_name and username:
+        return f"{first_name} (@{username})"
+    if first_name:
+        return first_name
+    if username:
+        return f"@{username}"
+    return f"ID {fallback_id}"
+
+
+def _render_leaderboard_section(
+    entries: list[dict[str, Any]],
+    user_id: int,
+    field: str,
+    title: str,
+) -> str:
+    if not entries:
+        return f"{title}\n—"
+
+    def _sort_key(item: dict[str, Any]):
+        return (-int(item[field]), -int(item.get("total", 0)), item["label"].lower())
+
+    sorted_entries = sorted(entries, key=_sort_key)
+    lines: list[str] = []
+    for index, entry in enumerate(sorted_entries, start=1):
+        marker = " <i>(это ты)</i>" if entry["user_id"] == user_id else ""
+        lines.append(
+            f"{index}. {escape(entry['label'])} — {int(entry[field])}{marker}"
+        )
+    return f"{title}\n" + "\n".join(lines)
+
+
+def _build_friends_panel(user_id: int) -> tuple[str, bool]:
+    friends = get_friends(user_id)
+    participants = [user_id] + [friend["user_id"] for friend in friends]
+    challenges_cache = get_all_challenges()
+    users_map = get_users_by_ids(participants)
+    entries: list[dict[str, Any]] = []
+    for participant_id in participants:
+        total_points, weekly_points = _calculate_user_points(participant_id, challenges_cache)
+        label = _build_display_label(users_map.get(participant_id), participant_id)
+        entries.append(
+            {
+                "user_id": participant_id,
+                "label": label,
+                "weekly": weekly_points,
+                "total": total_points,
+            }
+        )
+
+    weekly_block = _render_leaderboard_section(entries, user_id, "weekly", "📆 <b>Баллы за неделю</b>")
+    total_block = _render_leaderboard_section(entries, user_id, "total", "🏆 <b>Баллы за всё время</b>")
+    hint = (
+        "\n\nДобавьте друзей, чтобы сравнивать прогресс!"
+        if not friends
+        else ""
+    )
+    content = (
+        "🏅 <b>Рейтинг между друзьями</b>\n"
+        f"Друзей: {len(friends)}\n\n"
+        f"{weekly_block}\n\n{total_block}{hint}"
+    )
+    return content, bool(friends)
+
+
+def _friends_panel_payload(user_id: int):
+    text, has_friends = _build_friends_panel(user_id)
+    keyboard = get_friend_actions_keyboard(has_friends)
+    return text, keyboard
 
 
 @router.message(Command("admin"))
@@ -153,8 +296,9 @@ async def accept_task(callback: CallbackQuery):
     await callback.message.answer(
         f"✅ <b>{challenge['title']}</b>\n"
         "Задание добавлено во вкладку 📮 Отчёт.\n"
-        "Когда выполнишь — выбери задание в разделе отчётов и отправь фото.",
-        reply_markup=get_back_button(),
+        "Когда выполнишь — выбери задание в разделе отчётов и отправь фото.\n"
+        "🏠 Возвращаю тебя в главное меню.",
+        reply_markup=get_main_menu(),
     )
     await callback.answer("Задание принято!")
 
@@ -370,66 +514,19 @@ async def show_progress(message: Message):
     """Показать прогресс пользователя."""
     user_id = message.from_user.id
     accepted = get_accepted_challenges(user_id)
-    pending_reports = get_submitted_challenges(user_id, only_pending=True)
+    pending_submissions = get_submitted_challenges(user_id, only_pending=True)
     summary = get_user_review_summary(user_id)
     approved_count = summary.get('approved', 0)
     rejected_count = summary.get('rejected', 0)
-    pending_count = summary.get('pending', len(pending_reports))
+    pending_count = summary.get('pending', len(pending_submissions))
 
     challenges = get_all_challenges()
-    awarded = get_user_awarded_points(user_id)
+    total_points, weekly_points = _calculate_user_points(user_id, challenges)
 
-    def resolve_points_value(challenge_id: str, stored_points: int | None) -> int:
-        if stored_points is not None:
-            try:
-                return int(stored_points)
-            except (TypeError, ValueError):
-                return 0
-        cached = challenges.get(challenge_id)
-        details = cached or get_challenge(challenge_id)
-        if not details:
-            return 0
-        value = details.get("points_value")
-        if isinstance(value, int):
-            return value
-        points_field = details.get("points")
-        if isinstance(points_field, int):
-            return points_field
-        if isinstance(points_field, str):
-            digits = ''.join(ch for ch in points_field if ch.isdigit())
-            if digits:
-                try:
-                    return int(digits)
-                except ValueError:
-                    return 0
-        return 0
-
-    def get_week_start_msk() -> datetime:
-        now_msk = datetime.utcnow() + timedelta(hours=3)
-        start_date = now_msk.date() - timedelta(days=now_msk.weekday())
-        start_dt = datetime.combine(start_date, datetime.min.time()) + timedelta(minutes=1)
-        if now_msk < start_dt:
-            start_dt -= timedelta(days=7)
-        return start_dt
-
-    week_start = get_week_start_msk()
-    total_points = 0
-    weekly_points = 0
-    for challenge_id, points_value, reviewed_at in awarded:
-        points = resolve_points_value(challenge_id, points_value)
-        total_points += points
-        if reviewed_at:
-            try:
-                reviewed_dt = datetime.strptime(reviewed_at, '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                reviewed_dt = None
-            if reviewed_dt and reviewed_dt >= week_start:
-                weekly_points += points
-
-    if pending_reports:
+    if pending_submissions:
         pending_lines = "\n".join(
             f"• {challenges.get(challenge_id, {}).get('title', challenge_id)}"
-            for challenge_id, *_ in pending_reports
+            for challenge_id, *_ in pending_submissions
         )
         pending_text = f"⏳ Отчёты в обработке ({pending_count}):\n{pending_lines}"
     else:
@@ -450,6 +547,14 @@ async def show_progress(message: Message):
     )
 
 
+@router.message(F.text == "🏅 Рейтинг друзей")
+async def show_friends(message: Message):
+    """Показать рейтинг среди друзей."""
+    user_id = message.from_user.id
+    text, keyboard = _friends_panel_payload(user_id)
+    await message.answer(text, reply_markup=keyboard)
+
+
 @router.message(F.text == "❓ Помощь")
 async def show_help(message: Message):
     """Показать FAQ."""
@@ -468,4 +573,152 @@ async def show_help(message: Message):
         photo=FSInputFile("images/help_banner.jpg"),
         caption=help_text,
         reply_markup=get_main_menu(),
+    )
+
+
+@router.callback_query(F.data == "friends:refresh")
+async def refresh_friends(callback: CallbackQuery):
+    """Обновить показатели рейтинга."""
+    user_id = callback.from_user.id
+    text, keyboard = _friends_panel_payload(user_id)
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(text, reply_markup=keyboard)
+    await callback.answer("Рейтинг обновлён")
+
+
+@router.callback_query(F.data == "friends:add")
+async def prompt_friend_username(callback: CallbackQuery):
+    """Запросить username друга."""
+    user_id = callback.from_user.id
+    friend_states[user_id] = {"stage": "await_username"}
+    await callback.message.answer(
+        "Введите username друга (без @). Отправьте «отмена», чтобы прервать.",
+        reply_markup=get_friend_cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "friends:remove")
+async def prompt_friend_removal(callback: CallbackQuery):
+    """Показать список друзей для удаления."""
+    user_id = callback.from_user.id
+    friends = get_friends(user_id)
+    if not friends:
+        await callback.answer("Список друзей пуст.", show_alert=True)
+        return
+    items = [
+        (friend["user_id"], _build_display_label(friend, friend["user_id"]))
+        for friend in friends
+    ]
+    await callback.message.answer(
+        "Выберите друга, которого хотите убрать из рейтинга.",
+        reply_markup=get_friend_remove_keyboard(items),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("friends:remove_select:"))
+async def remove_friend_callback(callback: CallbackQuery):
+    """Удалить выбранного друга."""
+    user_id = callback.from_user.id
+    try:
+        friend_id = int(callback.data.split(":")[-1])
+    except ValueError:
+        await callback.answer("Некорректный выбор.", show_alert=True)
+        return
+    removed = remove_friend(user_id, friend_id)
+    response_text = "Друг удалён." if removed else "Этого пользователя уже нет в списке друзей."
+    try:
+        await callback.message.edit_text(response_text, reply_markup=None)
+    except Exception:
+        await callback.message.answer(response_text)
+    text, keyboard = _friends_panel_payload(user_id)
+    await callback.message.answer(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("friends:confirm_add:"))
+async def confirm_friend_add(callback: CallbackQuery):
+    """Подтвердить добавление друга."""
+    user_id = callback.from_user.id
+    try:
+        friend_id = int(callback.data.split(":")[-1])
+    except ValueError:
+        await callback.answer("Некорректный пользователь.", show_alert=True)
+        return
+    state = friend_states.get(user_id)
+    if not state or state.get("friend_id") != friend_id:
+        await callback.answer("Нет кандидата для добавления.", show_alert=True)
+        return
+    friend_states.pop(user_id, None)
+    added = add_friend(user_id, friend_id)
+    result_text = "Друг добавлен!" if added else "Этот пользователь уже есть в списке друзей."
+    try:
+        await callback.message.edit_text(result_text, reply_markup=None)
+    except Exception:
+        await callback.message.answer(result_text)
+    text, keyboard = _friends_panel_payload(user_id)
+    await callback.message.answer(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "friends:cancel")
+async def cancel_friend_flow(callback: CallbackQuery):
+    """Отменить начатое действие с друзьями."""
+    user_id = callback.from_user.id
+    friend_states.pop(user_id, None)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.answer("Отменено")
+
+
+@router.message(lambda message: friend_states.get(message.from_user.id, {}).get("stage") == "await_username")
+async def collect_friend_username(message: Message):
+    """Получить username друга от пользователя."""
+    user_id = message.from_user.id
+    entered = (message.text or "").strip()
+    if not entered:
+        await message.answer("Введите username друга (без @).")
+        return
+    if entered.lower() in {"отмена", "cancel"}:
+        friend_states.pop(user_id, None)
+        await message.answer("Добавление отменено.")
+        return
+
+    username = entered.lstrip("@").strip()
+    if not username:
+        await message.answer("Введите корректный username.")
+        return
+
+    candidate = find_user_by_username(username)
+    if not candidate:
+        await message.answer(
+            "Пользователь с таким username не найден. Убедитесь, что друг запускал бота.",
+        )
+        return
+
+    friend_id = candidate[0]
+    if friend_id == user_id:
+        await message.answer("Нельзя добавить себя в друзья.")
+        return
+
+    existing = {friend["user_id"] for friend in get_friends(user_id)}
+    if friend_id in existing:
+        await message.answer("Этот пользователь уже есть в списке друзей.")
+        return
+
+    friend_states[user_id] = {"stage": "confirm_add", "friend_id": friend_id}
+    friend_record = {
+        "user_id": friend_id,
+        "username": candidate[1],
+        "first_name": candidate[2],
+    }
+    label = escape(_build_display_label(friend_record, friend_id))
+    await message.answer(
+        f"Добавить друга {label}?",
+        reply_markup=get_friend_confirmation_keyboard(friend_id),
     )

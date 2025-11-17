@@ -59,6 +59,16 @@ def init_db():
             created_at TEXT NOT NULL
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_friends (
+            user_id INTEGER NOT NULL,
+            friend_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, friend_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (friend_id) REFERENCES users(user_id)
+        )
+    ''')
 
     cursor.execute("PRAGMA table_info(user_challenges)")
     existing_columns = {row[1] for row in cursor.fetchall()}
@@ -123,6 +133,127 @@ def get_all_user_ids() -> list[int]:
     ids = [row[0] for row in cursor.fetchall()]
     conn.close()
     return ids
+
+
+def find_user_by_username(username: str) -> tuple[int, str | None, str | None] | None:
+    """Найти пользователя по username (без учёта регистра)."""
+    if not username:
+        return None
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT user_id, username, first_name
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
+        LIMIT 1
+        """,
+        (username,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def add_friend(user_id: int, friend_id: int) -> bool:
+    """Добавить друга (двусторонняя запись)."""
+    if user_id == friend_id:
+        return False
+
+    conn = _get_connection()
+    cursor = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute(
+        '''
+        INSERT OR IGNORE INTO user_friends (user_id, friend_id, created_at)
+        VALUES (?, ?, ?)
+        ''',
+        (user_id, friend_id, timestamp)
+    )
+    inserted_primary = cursor.rowcount > 0
+    cursor.execute(
+        '''
+        INSERT OR IGNORE INTO user_friends (user_id, friend_id, created_at)
+        VALUES (?, ?, ?)
+        ''',
+        (friend_id, user_id, timestamp)
+    )
+    conn.commit()
+    conn.close()
+    return inserted_primary
+
+
+def remove_friend(user_id: int, friend_id: int) -> bool:
+    """Удалить дружбу в обе стороны."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        DELETE FROM user_friends
+        WHERE (user_id = ? AND friend_id = ?)
+           OR (user_id = ? AND friend_id = ?)
+        ''',
+        (user_id, friend_id, friend_id, user_id)
+    )
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def get_friends(user_id: int) -> list[dict]:
+    """Вернуть список друзей пользователя."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT u.user_id, u.username, u.first_name, uf.created_at
+        FROM user_friends AS uf
+        JOIN users AS u ON u.user_id = uf.friend_id
+        WHERE uf.user_id = ?
+        ORDER BY u.first_name ASC
+        ''',
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "user_id": row[0],
+            "username": row[1],
+            "first_name": row[2],
+            "since": row[3],
+        }
+        for row in rows
+    ]
+
+
+def get_users_by_ids(user_ids: Sequence[int]) -> dict[int, dict[str, str | int | None]]:
+    """Вернуть информацию о пользователях по списку ID."""
+    unique_ids = list(dict.fromkeys(uid for uid in user_ids if isinstance(uid, int)))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" * len(unique_ids))
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f'''
+        SELECT user_id, username, first_name
+        FROM users
+        WHERE user_id IN ({placeholders})
+        ''',
+        unique_ids,
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return {
+        row[0]: {
+            "user_id": row[0],
+            "username": row[1],
+            "first_name": row[2],
+        }
+        for row in rows
+    }
 
 
 def get_user_challenge_statuses(user_id: int) -> dict[str, str]:
@@ -496,6 +627,26 @@ def set_custom_challenge_active(challenge_id: str, active: bool) -> bool:
     conn.commit()
     conn.close()
     return updated
+
+
+def delete_custom_challenge(challenge_id: str) -> bool:
+    """Полностью удалить кастомный челлендж."""
+    internal_id = _decode_custom_id(challenge_id)
+    if internal_id is None:
+        return False
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        DELETE FROM custom_challenges
+        WHERE id = ?
+        ''',
+        (internal_id,)
+    )
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 def log_admin_action(admin_id: int, action: str, details: str | None = None):

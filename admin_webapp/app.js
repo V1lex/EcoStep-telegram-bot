@@ -318,6 +318,7 @@ async function loadChallenges() {
                         <p class="meta">Баллы: ${challenge.points} • CO₂: ${challenge.co2}</p>
                         <div class="actions">
                             <button type="button" data-action="${actionType}">${actionLabel}</button>
+                            <button type="button" data-action="delete" class="danger">Удалить</button>
                         </div>
                     </article>
                 `;
@@ -327,7 +328,25 @@ async function loadChallenges() {
             button.addEventListener("click", async (event) => {
                 const card = event.target.closest(".challenge-card");
                 const challengeId = card.dataset.id;
-                const isDeactivate = event.target.dataset.action === "deactivate";
+                const action = event.target.dataset.action;
+                if (action === "delete") {
+                    const confirmedDelete = confirm("Удалить задание без возможности восстановления?");
+                    if (!confirmedDelete) {
+                        return;
+                    }
+                    try {
+                        await apiFetch(`/challenges/${encodeURIComponent(challengeId)}`, {
+                            method: "DELETE",
+                        });
+                        showMessage("Задание удалено.");
+                        await loadChallenges();
+                    } catch (error) {
+                        showMessage(error.message);
+                    }
+                    return;
+                }
+
+                const isDeactivate = action === "deactivate";
                 if (isDeactivate) {
                     const confirmed = confirm("Убрать задание из списка доступных?");
                     if (!confirmed) {

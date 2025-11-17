@@ -21,6 +21,13 @@ def get_main_menu():
                 KeyboardButton(text="📈 Прогресс"),
                 KeyboardButton(text="❓ Помощь"),
             ],
+            [
+                KeyboardButton(
+                    text="🗺 Карта экологии",
+                    web_app=WebAppInfo(url="https://recyclemap.ru/"),
+                ),
+                KeyboardButton(text="🏅 Рейтинг друзей"),
+            ],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
@@ -118,4 +125,56 @@ def get_admin_panel_keyboard(url: str):
                 )
             ]
         ]
+    )
+
+
+def get_friend_actions_keyboard(has_friends: bool):
+    """Кнопки действий в разделе друзей."""
+    inline_keyboard = [
+        [InlineKeyboardButton(text="➕ Добавить друга", callback_data="friends:add")],
+    ]
+    if has_friends:
+        inline_keyboard.append(
+            [InlineKeyboardButton(text="➖ Удалить друга", callback_data="friends:remove")]
+        )
+    inline_keyboard.append(
+        [InlineKeyboardButton(text="🔁 Обновить рейтинг", callback_data="friends:refresh")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+
+def get_friend_confirmation_keyboard(friend_id: int):
+    """Клавиатура подтверждения добавления друга."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Добавить",
+                    callback_data=f"friends:confirm_add:{friend_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="friends:cancel")],
+        ]
+    )
+
+
+def get_friend_remove_keyboard(items: Sequence[tuple[int, str]]):
+    """Клавиатура выбора друга для удаления."""
+    inline_keyboard = [
+        [
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"friends:remove_select:{friend_id}",
+            )
+        ]
+        for friend_id, label in items
+    ]
+    inline_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="friends:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+
+def get_friend_cancel_keyboard():
+    """Клавиатура с кнопкой отмены."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="friends:cancel")]]
     )

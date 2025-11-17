@@ -35,6 +35,7 @@ from config.challenges import get_all_challenges, get_challenge
 from create_bot import bot
 from database import (
     create_custom_challenge,
+    delete_custom_challenge,
     fetch_custom_challenges,
     get_admin_logs,
     get_all_user_ids,
@@ -234,6 +235,30 @@ def get_app() -> FastAPI:
             source="custom",
             active=bool(refreshed["active"]),
         )
+
+    @api_router.delete("/challenges/{challenge_id}")
+    async def delete_challenge_endpoint(
+        challenge_id: str,
+        admin_id: int = Depends(current_admin),
+    ):
+        challenge = get_custom_challenge(challenge_id)
+        if not challenge:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Удаляемое задание не найдено.",
+            )
+        deleted = delete_custom_challenge(challenge_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не удалось удалить задание.",
+            )
+        log_admin_action(
+            admin_id,
+            "delete_challenge",
+            f"{challenge_id}: {challenge['title']}",
+        )
+        return {"status": "deleted"}
 
     @api_router.post("/broadcast")
     async def broadcast(
