@@ -178,3 +178,23 @@ def get_friend_cancel_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="friends:cancel")]]
     )
+
+
+def get_friend_request_keyboard(request_id: int):
+    """Клавиатура для подтверждения заявки в друзья."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Принять",
+                    callback_data=f"friends:req_accept:{request_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Отклонить",
+                    callback_data=f"friends:req_decline:{request_id}",
+                )
+            ],
+        ]
+    )

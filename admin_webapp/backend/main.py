@@ -1,4 +1,5 @@
 import secrets
+from html import escape
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -39,8 +40,10 @@ from database import (
     fetch_custom_challenges,
     get_admin_logs,
     get_all_user_ids,
+    get_friend_ids,
     get_custom_challenge,
     get_pending_reports,
+    get_user_info,
     init_db,
     log_admin_action,
     set_custom_challenge_active,
@@ -307,14 +310,46 @@ def get_app() -> FastAPI:
             )
         return responses
 
-    async def _notify_user(
-        user_id: int,
-        message: str,
-    ):
-        try:
-            await bot.send_message(user_id, message)
-        except Exception:
-            pass
+async def _notify_user(
+    user_id: int,
+    message: str,
+):
+    try:
+        await bot.send_message(user_id, message)
+    except Exception:
+        pass
+
+
+def _format_user_display(user_id: int) -> str:
+    info = get_user_info(user_id)
+    if not info:
+        return f"ID {user_id}"
+    _, username, first_name, *_ = info
+    first_name = (first_name or "").strip()
+    username = (username or "").strip()
+    if first_name and username:
+        return f"{first_name} (@{username})"
+    if first_name:
+        return first_name
+    if username:
+        return f"@{username}"
+    return f"ID {user_id}"
+
+
+async def _notify_friends_about_completion(user_id: int, challenge_title: str, points: int | None):
+    friend_ids = get_friend_ids(user_id)
+    if not friend_ids:
+        return
+    friend_message = (
+        f"🎉 Ваш друг <b>{escape(_format_user_display(user_id))}</b> выполнил задание "
+        f"<b>{escape(challenge_title)}</b>."
+    )
+    if points:
+        friend_message += f"\n🏅 Он заработал {points} баллов."
+    for friend_id in friend_ids:
+        if friend_id == user_id:
+            continue
+        await _notify_user(friend_id, friend_message)
 
     def _get_challenge_points_value(challenge_id: str) -> int:
         details = get_challenge(challenge_id)
@@ -367,6 +402,12 @@ def get_app() -> FastAPI:
         if decision == "rejected":
             user_message += "\n🔁 Задание снова доступно для принятия."
         await _notify_user(payload.user_id, user_message)
+        if decision == "approved":
+            await _notify_friends_about_completion(
+                payload.user_id,
+                challenge_title,
+                points_value,
+            )
         return {"status": "ok"}
 
     @api_router.get("/logs", response_model=list[AdminLogEntry])

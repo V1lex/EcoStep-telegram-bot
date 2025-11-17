@@ -69,6 +69,18 @@ def init_db():
             FOREIGN KEY (friend_id) REFERENCES users(user_id)
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS friend_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_id INTEGER NOT NULL,
+            target_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            responded_at TEXT,
+            FOREIGN KEY (requester_id) REFERENCES users(user_id),
+            FOREIGN KEY (target_id) REFERENCES users(user_id)
+        )
+    ''')
 
     cursor.execute("PRAGMA table_info(user_challenges)")
     existing_columns = {row[1] for row in cursor.fetchall()}
@@ -228,6 +240,24 @@ def get_friends(user_id: int) -> list[dict]:
     ]
 
 
+def get_friend_ids(user_id: int) -> list[int]:
+    """Вернуть список ID друзей пользователя."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT friend_id
+        FROM user_friends
+        WHERE user_id = ?
+        ORDER BY friend_id ASC
+        ''',
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+
 def get_users_by_ids(user_ids: Sequence[int]) -> dict[int, dict[str, str | int | None]]:
     """Вернуть информацию о пользователях по списку ID."""
     unique_ids = list(dict.fromkeys(uid for uid in user_ids if isinstance(uid, int)))
@@ -254,6 +284,128 @@ def get_users_by_ids(user_ids: Sequence[int]) -> dict[int, dict[str, str | int |
         }
         for row in rows
     }
+
+
+def _are_friends(user_id: int, friend_id: int) -> bool:
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT 1
+        FROM user_friends
+        WHERE user_id = ? AND friend_id = ?
+        LIMIT 1
+        ''',
+        (user_id, friend_id)
+    )
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+
+def _get_pending_friend_request_between(requester_id: int, target_id: int) -> dict | None:
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT id, requester_id, target_id, status, created_at, responded_at
+        FROM friend_requests
+        WHERE requester_id = ? AND target_id = ? AND status = 'pending'
+        ORDER BY id DESC
+        LIMIT 1
+        ''',
+        (requester_id, target_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "requester_id": row[1],
+        "target_id": row[2],
+        "status": row[3],
+        "created_at": row[4],
+        "responded_at": row[5],
+    }
+
+
+def get_friend_request(request_id: int) -> dict | None:
+    """Получить данные по заявке в друзья."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT id, requester_id, target_id, status, created_at, responded_at
+        FROM friend_requests
+        WHERE id = ?
+        ''',
+        (request_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "requester_id": row[1],
+        "target_id": row[2],
+        "status": row[3],
+        "created_at": row[4],
+        "responded_at": row[5],
+    }
+
+
+def update_friend_request_status(request_id: int, status: str) -> bool:
+    """Обновить статус заявки в друзья."""
+    responded_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        UPDATE friend_requests
+        SET status = ?, responded_at = ?
+        WHERE id = ? AND status = 'pending'
+        ''',
+        (status, responded_at, request_id)
+    )
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def create_friend_request(requester_id: int, target_id: int) -> dict:
+    """Создать заявку в друзья или принять существующую."""
+    if requester_id == target_id:
+        return {"status": "self"}
+    if _are_friends(requester_id, target_id):
+        return {"status": "already_friends"}
+
+    reverse = _get_pending_friend_request_between(target_id, requester_id)
+    if reverse:
+        update_friend_request_status(reverse["id"], "accepted")
+        add_friend(requester_id, target_id)
+        return {"status": "auto_accepted", "request_id": reverse["id"]}
+
+    existing = _get_pending_friend_request_between(requester_id, target_id)
+    if existing:
+        return {"status": "already_pending", "request_id": existing["id"]}
+
+    conn = _get_connection()
+    cursor = conn.cursor()
+    created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute(
+        '''
+        INSERT INTO friend_requests (requester_id, target_id, status, created_at)
+        VALUES (?, ?, 'pending', ?)
+        ''',
+        (requester_id, target_id, created_at)
+    )
+    request_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return {"status": "created", "request_id": request_id}
 
 
 def get_user_challenge_statuses(user_id: int) -> dict[str, str]:
