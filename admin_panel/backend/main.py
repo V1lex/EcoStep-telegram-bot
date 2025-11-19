@@ -10,7 +10,6 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
@@ -328,46 +327,44 @@ def get_app() -> FastAPI:
             )
         return responses
 
-async def _notify_user(
-    user_id: int,
-    message: str,
-):
-    try:
-        await bot.send_message(user_id, message)
-    except Exception:
-        pass
+    async def _notify_user(
+        user_id: int,
+        message: str,
+    ):
+        try:
+            await bot.send_message(user_id, message)
+        except Exception:
+            pass
 
-
-def _format_user_display(user_id: int) -> str:
-    info = get_user_info(user_id)
-    if not info:
+    def _format_user_display(user_id: int) -> str:
+        info = get_user_info(user_id)
+        if not info:
+            return f"ID {user_id}"
+        _, username, first_name, *_ = info
+        first_name = (first_name or "").strip()
+        username = (username or "").strip()
+        if first_name and username:
+            return f"{first_name} (@{username})"
+        if first_name:
+            return first_name
+        if username:
+            return f"@{username}"
         return f"ID {user_id}"
-    _, username, first_name, *_ = info
-    first_name = (first_name or "").strip()
-    username = (username or "").strip()
-    if first_name and username:
-        return f"{first_name} (@{username})"
-    if first_name:
-        return first_name
-    if username:
-        return f"@{username}"
-    return f"ID {user_id}"
 
-
-async def _notify_friends_about_completion(user_id: int, challenge_title: str, points: int | None):
-    friend_ids = get_friend_ids(user_id)
-    if not friend_ids:
-        return
-    friend_message = (
-        f"🎉 Ваш друг <b>{escape(_format_user_display(user_id))}</b> выполнил задание "
-        f"<b>{escape(challenge_title)}</b>."
-    )
-    if points:
-        friend_message += f"\n🏅 Он заработал {points} баллов."
-    for friend_id in friend_ids:
-        if friend_id == user_id:
-            continue
-        await _notify_user(friend_id, friend_message)
+    async def _notify_friends_about_completion(user_id: int, challenge_title: str, points: int | None):
+        friend_ids = get_friend_ids(user_id)
+        if not friend_ids:
+            return
+        friend_message = (
+            f"🎉 Ваш друг <b>{escape(_format_user_display(user_id))}</b> выполнил задание "
+            f"<b>{escape(challenge_title)}</b>."
+        )
+        if points:
+            friend_message += f"\n🏅 Он заработал {points} баллов."
+        for friend_id in friend_ids:
+            if friend_id == user_id:
+                continue
+            await _notify_user(friend_id, friend_message)
 
     def _get_challenge_points_value(challenge_id: str) -> int:
         details = get_challenge(challenge_id)
@@ -450,14 +447,9 @@ async def _notify_friends_about_completion(user_id: int, challenge_title: str, p
 
     static_dir = Path(__file__).resolve().parent.parent
 
-    @app.get("/", response_class=HTMLResponse)
-    async def admin_index():
-        index_file = static_dir / "index.html"
-        return index_file.read_text(encoding="utf-8")
-
     app.mount(
-        "/static",
-        StaticFiles(directory=str(static_dir), html=False),
+        "/",
+        StaticFiles(directory=str(static_dir), html=True),
         name="static",
     )
     return app
