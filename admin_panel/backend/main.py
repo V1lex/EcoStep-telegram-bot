@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from admin_panel.backend.schemas import (
+from .schemas import (
     AdminLogEntry,
     BroadcastRequest,
     ChallengeCreateRequest,
