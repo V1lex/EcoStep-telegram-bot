@@ -10,6 +10,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
@@ -448,9 +449,15 @@ async def _notify_friends_about_completion(user_id: int, challenge_title: str, p
     app.include_router(api_router)
 
     static_dir = Path(__file__).resolve().parent.parent
+
+    @app.get("/", response_class=HTMLResponse)
+    async def admin_index():
+        index_file = static_dir / "index.html"
+        return index_file.read_text(encoding="utf-8")
+
     app.mount(
-        "/",
-        StaticFiles(directory=str(static_dir), html=True),
+        "/static",
+        StaticFiles(directory=str(static_dir), html=False),
         name="static",
     )
     return app
