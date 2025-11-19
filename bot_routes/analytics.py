@@ -640,8 +640,8 @@ async def show_help(message: Message):
         "<b>4. Не вижу новых заданий.</b>\n"
         "Если все текущие челленджи выполнены, дождись обновления — мы пришлём новые!"
     )
-        await message.answer_photo(
-            photo=FSInputFile("assets/help_banner.jpg"),
+    await message.answer_photo(
+        photo=FSInputFile("assets/help_banner.jpg"),
         caption=help_text,
         reply_markup=get_main_menu(),
     )
