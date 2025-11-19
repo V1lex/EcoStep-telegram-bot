@@ -1,12 +1,12 @@
 from urllib.parse import urlparse
 
 from aiogram.types import Message
-from config.admins import ADMIN_WEBAPP_URL, has_admin_panel, is_admin
-from keyboards.all_keyboards import get_admin_panel_keyboard
+from settings.admins import ADMIN_WEBAPP_URL, has_admin_panel, is_admin
+from bot_keyboards.all_keyboards import get_admin_panel_keyboard
 
 
 async def send_admin_panel_prompt(message: Message, user_id: int):
-    """Отправить кнопку открытия админской mini app, если пользователь — админ."""
+    """Отправить кнопку открытия админской mini app, если пользователь - админ."""
     if not is_admin(user_id):
         return
     if not has_admin_panel():

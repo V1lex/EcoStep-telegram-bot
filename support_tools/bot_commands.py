@@ -4,7 +4,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BotCommand, BotCommandScopeChat
 
-from config.admins import ADMIN_IDS, has_admin_panel
+from settings.admins import ADMIN_IDS, has_admin_panel
 
 
 async def setup_bot_commands(bot: Bot):

@@ -2,8 +2,8 @@ from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, Message
 
-from keyboards.all_keyboards import get_main_menu
-from utils.admin_panel import send_admin_panel_prompt
+from bot_keyboards.all_keyboards import get_main_menu
+from support_tools.admin_panel import send_admin_panel_prompt
 
 router = Router()
 
@@ -21,7 +21,7 @@ async def cmd_start(message: Message):
     )
     
     # Отправка фото с текстом и кнопками
-    photo = FSInputFile("images/start_banner.jpg")
+    photo = FSInputFile("assets/start_banner.jpg")
     await message.answer_photo(
         photo=photo,
         caption=caption_text,

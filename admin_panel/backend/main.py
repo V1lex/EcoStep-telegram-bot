@@ -1,8 +1,6 @@
 import secrets
 from html import escape
 from pathlib import Path
-from typing import Dict, Optional
-
 from dotenv import load_dotenv
 from fastapi import (
     APIRouter,
@@ -15,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from admin_webapp.backend.schemas import (
+from admin_panel.backend.schemas import (
     AdminLogEntry,
     BroadcastRequest,
     ChallengeCreateRequest,
@@ -26,14 +24,14 @@ from admin_webapp.backend.schemas import (
     ReportActionRequest,
     ReportResponse,
 )
-from config.admins import (
+from settings.admins import (
     ADMIN_CREDENTIALS,
     ADMIN_IDS,
     ADMIN_PANEL_PASSWORD,
     validate_admin_password,
 )
-from config.challenges import get_all_challenges, get_challenge
-from create_bot import bot
+from settings.challenges import get_all_challenges, get_challenge
+from bot_core import bot
 from database import (
     create_custom_challenge,
     delete_custom_challenge,
@@ -44,17 +42,19 @@ from database import (
     get_custom_challenge,
     get_pending_reports,
     get_user_info,
+    get_user_registration_counts,
     init_db,
     log_admin_action,
     set_custom_challenge_active,
     update_report_review,
 )
+from support_tools.co2 import parse_co2_value
 
 security = HTTPBearer(auto_error=False)
-active_tokens: Dict[str, int] = {}
+active_tokens: dict[str, int] = {}
 
 
-async def build_file_url(file_id: Optional[str]) -> Optional[str]:
+async def build_file_url(file_id: str | None) -> str | None:
     if not file_id:
         return None
     try:
@@ -136,6 +136,14 @@ def get_app() -> FastAPI:
             )
         return admin_id
 
+    @api_router.get("/stats/users")
+    async def user_stats(_: int = Depends(current_admin)):
+        counts = get_user_registration_counts()
+        return {
+            "total_users": counts["total"],
+            "weekly_users": counts["weekly"],
+        }
+
     @api_router.get("/challenges", response_model=list[ChallengeResponse])
     async def list_challenges(_: int = Depends(current_admin)):
         challenges = get_all_challenges()
@@ -153,6 +161,7 @@ def get_app() -> FastAPI:
                     co2=str(data["co2"]),
                     source="default",
                     active=True,
+                    co2_quantity_based=bool(data.get("co2_quantity_based", False)),
                 )
             )
         for item in custom:
@@ -165,6 +174,7 @@ def get_app() -> FastAPI:
                     co2=item["co2"],
                     source="custom",
                     active=bool(item["active"]),
+                    co2_quantity_based=bool(item.get("co2_quantity_based", False)),
                 )
             )
         return response
@@ -179,6 +189,7 @@ def get_app() -> FastAPI:
             payload.description,
             payload.points,
             payload.co2,
+            payload.co2_quantity_based,
         )
         log_admin_action(
             admin_id,
@@ -193,6 +204,7 @@ def get_app() -> FastAPI:
             co2=payload.co2,
             source="custom",
             active=True,
+            co2_quantity_based=payload.co2_quantity_based,
         )
 
     @api_router.patch("/challenges/{challenge_id}", response_model=ChallengeResponse)
@@ -237,6 +249,7 @@ def get_app() -> FastAPI:
             co2=str(refreshed["co2"]),
             source="custom",
             active=bool(refreshed["active"]),
+            co2_quantity_based=bool(refreshed.get("co2_quantity_based", False)),
         )
 
     @api_router.delete("/challenges/{challenge_id}")
@@ -293,6 +306,7 @@ def get_app() -> FastAPI:
             details = challenges_cache.get(report["challenge_id"]) or get_challenge(report["challenge_id"])
             title = details["title"] if details else report["challenge_id"]
             file_url = await build_file_url(report["photo_file_id"])
+            co2_value = parse_co2_value(details.get("co2")) if details else None
             responses.append(
                 ReportResponse(
                     user_id=report["user_id"],
@@ -306,6 +320,9 @@ def get_app() -> FastAPI:
                     attachment_name=report["attachment_name"],
                     file_id=report["photo_file_id"],
                     file_url=file_url,
+                    co2=details.get("co2") if details else None,
+                    co2_value=co2_value,
+                    co2_quantity_based=bool(details.get("co2_quantity_based", False)) if details else False,
                 )
             )
         return responses
@@ -372,19 +389,23 @@ async def _notify_friends_about_completion(user_id: int, challenge_title: str, p
     ):
         decision = payload.decision
         points_value = _get_challenge_points_value(payload.challenge_id) if decision == "approved" else None
+        challenge = get_challenge(payload.challenge_id)
+        co2_amount = payload.co2_saved
+        if co2_amount is None and challenge:
+            co2_amount = parse_co2_value(challenge.get("co2"))
         updated = update_report_review(
             payload.user_id,
             payload.challenge_id,
             decision,
             payload.comment,
             points_value,
+            co2_amount,
         )
         if not updated:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Отчёт не найден или уже обработан.",
             )
-        challenge = get_challenge(payload.challenge_id)
         challenge_title = challenge["title"] if challenge else payload.challenge_id
         decision_text = "одобрен" if decision == "approved" else "отклонён"
         log_admin_action(

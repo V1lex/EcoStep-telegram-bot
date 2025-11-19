@@ -156,7 +156,8 @@ class TestDatabase:
             title="Test Challenge",
             description="Test Description", 
             points=100,
-            co2="10kg"
+            co2="10kg",
+            co2_quantity_based=True,
         )
         assert challenge_id.startswith("custom_")
         
@@ -165,7 +166,8 @@ class TestDatabase:
         assert len(challenges) == 1
         assert challenges[0]["title"] == "Test Challenge"
         assert challenges[0]["points"] == 100
-        print("✅ Кастомные челленджи работают")
+        assert challenges[0]["co2_quantity_based"] is True
+        print("Кастомные челленджи работают")
     
     def test_admin_logs(self):
         """Тест логов администратора"""
@@ -186,7 +188,7 @@ class TestDatabase:
         assert logs[1]["action"] == "create_challenge"
         assert logs[0]["action"] == "login"
         assert logs[0]["admin_id"] == 123
-        print("✅ Логи администратора работают")
+        print("Логи администратора работают")
     
     def test_pending_reports(self):
         """Тест получения отчетов на модерацию"""
@@ -216,7 +218,7 @@ class TestDatabase:
         assert pending[0]["user_id"] == 444
         assert pending[0]["challenge_id"] == "challenge_4"
         assert pending[1]["user_id"] == 555
-        print("✅ Отчеты на модерацию работают")
+        print("Отчеты на модерацию работают")
 
     def test_report_review(self):
         """Тест модерации отчетов"""
@@ -230,7 +232,8 @@ class TestDatabase:
             challenge_id="challenge_6",
             review_status="approved",
             review_comment="Good job!",
-            awarded_points=100
+            awarded_points=100,
+            co2_saved=1.5,
         )
         assert result_approve is True
         
@@ -242,6 +245,7 @@ class TestDatabase:
         points = get_user_awarded_points(666)
         assert len(points) == 1
         assert points[0][1] == 100  # points_awarded
+        assert points[0][3] == 1.5
     
     def test_user_review_summary(self):
         """Тест сводки по модерации"""
@@ -253,7 +257,7 @@ class TestDatabase:
         
         accept_challenge(777, "challenge_approved")
         mark_challenge_submitted(777, "challenge_approved", "file_2", "Approved")
-        update_report_review(777, "challenge_approved", "approved", awarded_points=50)
+        update_report_review(777, "challenge_approved", "approved", awarded_points=50, co2_saved=0.5)
         
         accept_challenge(777, "challenge_rejected")
         mark_challenge_submitted(777, "challenge_rejected", "file_3", "Rejected")
@@ -279,7 +283,7 @@ def run_all_tests():
 
 def quick_test():
     """Быстрый тест основных функций"""
-    print("🚀 Запуск быстрого теста базы данных...")
+    print("Запуск быстрого теста базы данных...")
     
     # Временно меняем БД для теста
     global DB_NAME
@@ -293,27 +297,27 @@ def quick_test():
         register_user(999, "test", "Test User")
         user = get_user_info(999)
         assert user is not None
-        print("✅ Регистрация пользователя - OK")
+        print("Регистрация пользователя - OK")
         
         # Тест челленджей
         accept_challenge(999, "test_challenge")
         statuses = get_user_challenge_statuses(999)
         assert "test_challenge" in statuses
-        print("✅ Принятие челленджа - OK")
+        print("Принятие челленджа - OK")
         
         # Тест отправки отчета
         mark_challenge_submitted(999, "test_challenge", "test_file", "Test caption")
         submitted = get_submitted_challenges(999)
         assert len(submitted) > 0
-        print("✅ Отправка отчета - OK")
+        print("Отправка отчета - OK")
         
         # Тест кастомных челленджей
         challenge_id = create_custom_challenge("Test", "Desc", 50, "5kg")
         challenges = fetch_custom_challenges()
         assert len(challenges) > 0
-        print("✅ Кастомные челленджи - OK")
+        print("Кастомные челленджи - OK")
         
-        print("🎉 Все основные тесты пройдены!")
+        print("Все основные тесты пройдены!")
         
     finally:
         # Восстанавливаем оригинальную БД и чистим тестовую

@@ -1,7 +1,6 @@
 from datetime import datetime
-from typing import Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -23,6 +22,7 @@ class ChallengeCreateRequest(BaseModel):
     description: str = Field(..., min_length=10, max_length=1024)
     points: int = Field(..., ge=1, le=500)
     co2: str = Field(..., min_length=1, max_length=64)
+    co2_quantity_based: bool = Field(False, description="CO₂ зависит от количества")
 
 
 class ChallengeUpdateRequest(BaseModel):
@@ -37,37 +37,42 @@ class ChallengeResponse(BaseModel):
     co2: str
     source: str
     active: bool = True
+    co2_quantity_based: bool = False
 
 
 class ReportActionRequest(BaseModel):
     user_id: int
     challenge_id: str
     decision: str = Field(..., pattern="^(approved|rejected)$")
-    comment: Optional[str] = Field(None, max_length=512)
+    comment: str | None = Field(None, max_length=512)
+    co2_saved: float | None = Field(None, ge=0)
 
 
 class ReportResponse(BaseModel):
     user_id: int
-    username: Optional[str]
-    first_name: Optional[str]
+    username: str | None
+    first_name: str | None
     challenge_id: str
     challenge_title: str
     submitted_at: str
-    caption: Optional[str]
+    caption: str | None
     attachment_type: str
-    attachment_name: Optional[str]
-    file_id: Optional[str]
-    file_url: Optional[str]
+    attachment_name: str | None
+    file_id: str | None
+    file_url: str | None
+    co2: str | None
+    co2_value: float | None
+    co2_quantity_based: bool = False
 
 
 class AdminLogEntry(BaseModel):
     id: int
-    admin_id: Optional[int]
+    admin_id: int | None
     action: str
-    details: Optional[str]
+    details: str | None
     created_at: datetime
 
-    @validator("created_at", pre=True)
+    @field_validator("created_at", mode="before")
     def parse_datetime(cls, value):
         if isinstance(value, datetime):
             return value

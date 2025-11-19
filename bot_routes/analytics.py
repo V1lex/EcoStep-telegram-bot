@@ -6,8 +6,8 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from config.admins import has_admin_panel, is_admin
-from config.challenges import get_all_challenges, get_challenge
+from settings.admins import has_admin_panel, is_admin
+from settings.challenges import get_all_challenges, get_challenge
 from database import (
     accept_challenge,
     add_friend,
@@ -28,7 +28,7 @@ from database import (
     remove_friend,
     update_friend_request_status,
 )
-from keyboards.all_keyboards import (
+from bot_keyboards.all_keyboards import (
     get_back_button,
     get_challenge_actions_keyboard,
     get_friend_actions_keyboard,
@@ -41,7 +41,8 @@ from keyboards.all_keyboards import (
     get_report_confirmation_keyboard,
     get_tasks_keyboard,
 )
-from utils.admin_panel import send_admin_panel_prompt
+from support_tools.admin_panel import send_admin_panel_prompt
+from support_tools.co2 import parse_co2_value
 
 router = Router()
 
@@ -91,14 +92,36 @@ def _resolve_points_value(
     return 0
 
 
-def _calculate_user_points(user_id: int, challenges_cache: dict[str, dict]) -> tuple[int, int]:
+def _resolve_co2_value(
+    challenge_id: str,
+    stored_value: float | None,
+    challenges_cache: dict[str, dict],
+) -> float:
+    if stored_value is not None:
+        try:
+            return float(stored_value)
+        except (TypeError, ValueError):
+            return 0.0
+    details = challenges_cache.get(challenge_id) or get_challenge(challenge_id)
+    if not details:
+        return 0.0
+    parsed = parse_co2_value(details.get("co2"))
+    if parsed is None:
+        return 0.0
+    return parsed
+
+
+def _calculate_user_progress(user_id: int, challenges_cache: dict[str, dict]) -> tuple[int, int, float]:
     awarded = get_user_awarded_points(user_id)
     week_start = _get_week_start_msk()
     total_points = 0
     weekly_points = 0
-    for challenge_id, points_value, reviewed_at in awarded:
+    total_co2 = 0.0
+    for challenge_id, points_value, reviewed_at, stored_co2 in awarded:
         points = _resolve_points_value(challenge_id, points_value, challenges_cache)
+        co2_value = _resolve_co2_value(challenge_id, stored_co2, challenges_cache)
         total_points += points
+        total_co2 += co2_value
         if reviewed_at:
             try:
                 reviewed_dt = datetime.strptime(reviewed_at, '%Y-%m-%d %H:%M:%S')
@@ -106,7 +129,16 @@ def _calculate_user_points(user_id: int, challenges_cache: dict[str, dict]) -> t
                 reviewed_dt = None
             if reviewed_dt and reviewed_dt >= week_start:
                 weekly_points += points
-    return total_points, weekly_points
+    return total_points, weekly_points, total_co2
+
+
+def _format_co2_total(value: float) -> str:
+    if value <= 0:
+        return "0"
+    formatted = f"{value:.2f}"
+    if "." in formatted:
+        formatted = formatted.rstrip("0").rstrip(".")
+    return formatted
 
 
 def _build_display_label(record: dict[str, Any] | None, fallback_id: int) -> str:
@@ -152,7 +184,7 @@ def _build_friends_panel(user_id: int) -> tuple[str, bool]:
     users_map = get_users_by_ids(participants)
     entries: list[dict[str, Any]] = []
     for participant_id in participants:
-        total_points, weekly_points = _calculate_user_points(participant_id, challenges_cache)
+        total_points, weekly_points, _ = _calculate_user_progress(participant_id, challenges_cache)
         label = _build_display_label(users_map.get(participant_id), participant_id)
         entries.append(
             {
@@ -245,7 +277,7 @@ async def show_tasks(message: Message):
 
     if available:
         await message.answer_photo(
-            photo=FSInputFile("images/tasks_banner.jpg"),
+            photo=FSInputFile("assets/tasks_banner.jpg"),
             caption=(
                 "📋 <b>Доступные задания:</b>\n\n"
                 "Выбери задание, чтобы узнать подробности и начать челлендж."
@@ -291,11 +323,17 @@ async def task_details(callback: CallbackQuery):
         await callback.answer("Это задание тебе уже недоступно.", show_alert=True)
         return
 
+    extra_note = (
+        "\n⚖️ <b>CO₂ зависит от количества.</b> Добавь фактический объём (кг) в комментарий при отправке отчёта."
+        if challenge.get("co2_quantity_based")
+        else ""
+    )
+
     await callback.message.answer(
         f"<b>{challenge['title']}</b>\n\n"
         f"📝 <b>Описание:</b>\n{challenge['description']}\n\n"
         f"🏆 <b>Награда:</b> {challenge['points']}\n"
-        f"🌍 <b>Экономия CO₂:</b> {challenge['co2']}\n\n"
+        f"🌍 <b>Экономия CO₂:</b> {challenge['co2']}{extra_note}\n\n"
         f"Если готов — принимай задание и выполняй!",
         reply_markup=get_challenge_actions_keyboard(challenge_id),
     )
@@ -395,9 +433,14 @@ async def request_report(callback: CallbackQuery):
 
     pending_reports[user_id] = challenge_id
     pending_report_payloads.pop(user_id, None)
+    extra_hint = ""
+    if challenge.get("co2_quantity_based"):
+        extra_hint = "\nНе забудьте указать фактическое количество (кг) в описании отчёта."
+
     await callback.message.answer(
         f"📸 Отправьте отчёт по заданию <b>{challenge['title']}</b>.\n"
-        "Пришлите фото и, при желании, добавьте описание.",
+        "Пришлите фото и, при желании, добавьте описание."
+        f"{extra_hint}",
         reply_markup=get_back_button(),
     )
     await callback.answer("Жду отчёт!")
@@ -547,7 +590,8 @@ async def show_progress(message: Message):
     pending_count = summary.get('pending', len(pending_submissions))
 
     challenges = get_all_challenges()
-    total_points, weekly_points = _calculate_user_points(user_id, challenges)
+    total_points, weekly_points, total_co2 = _calculate_user_progress(user_id, challenges)
+    co2_display = _format_co2_total(total_co2)
 
     if pending_submissions:
         pending_lines = "\n".join(
@@ -559,7 +603,7 @@ async def show_progress(message: Message):
         pending_text = "⏳ Отчёты в обработке: нет"
 
     await message.answer_photo(
-        photo=FSInputFile("images/progress_banner.jpg"),
+        photo=FSInputFile("assets/progress_banner.jpg"),
         caption=(
             "📈 <b>Твой прогресс:</b>\n\n"
             f"📝 Принято заданий: {len(accepted)}\n"
@@ -568,6 +612,7 @@ async def show_progress(message: Message):
             f"❌ Отклонено отчётов: {rejected_count}\n\n"
             f"🏅 Баллы за всё время: {total_points}\n"
             f"📆 Баллы за неделю: {weekly_points} (сброс в 00:01 по Мск)\n"
+            f"🌍 CO₂ за всё время: {co2_display} кг\n"
         ),
         reply_markup=get_main_menu(),
     )
@@ -595,8 +640,8 @@ async def show_help(message: Message):
         "<b>4. Не вижу новых заданий.</b>\n"
         "Если все текущие челленджи выполнены, дождись обновления — мы пришлём новые!"
     )
-    await message.answer_photo(
-        photo=FSInputFile("images/help_banner.jpg"),
+        await message.answer_photo(
+            photo=FSInputFile("assets/help_banner.jpg"),
         caption=help_text,
         reply_markup=get_main_menu(),
     )

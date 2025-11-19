@@ -1,10 +1,10 @@
 import asyncio
 import logging
 from aiogram.types import Message
-from create_bot import dp, bot
-from handlers import start, analytics
+from bot_core import dp, bot
+from bot_routes import start, analytics
 from database import init_db, register_user
-from utils.bot_commands import setup_bot_commands
+from support_tools.bot_commands import setup_bot_commands
 
 # Подключаем обработчики
 dp.include_router(start.router)
@@ -30,7 +30,7 @@ async def main():
     dp.message.middleware(register_middleware)
     
     logging.basicConfig(level=logging.INFO)
-    print("✅ Bot is running...")
+    print("Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

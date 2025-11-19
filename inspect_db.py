@@ -7,7 +7,7 @@ cursor = conn.cursor()
 cursor.execute("SELECT * FROM users")
 users = cursor.fetchall()
 
-print("📊 Пользователи в базе данных:")
+print("Пользователи в базе данных:")
 for user in users:
     print(f"ID: {user[0]}, Username: {user[1]}, Имя: {user[2]}, Дата регистрации: {user[3]}")
 

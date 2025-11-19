@@ -1,6 +1,6 @@
-aiogram==3.13.1          # фреймворк для Telegram-бота
-python-dotenv==1.0.1     # загрузка .env с токенами и настройками
-aiofiles==24.1.0         # асинхронная работа с файлами
-sqlalchemy==2.0.35       # ORM для SQLite (таблицы, миграции)
-fastapi==0.115.2         # API для админ-панели
-uvicorn[standard]==0.30.6 # сервер для FastAPI
+aiogram==3.13.1
+python-dotenv==1.0.1
+aiofiles==24.1.0
+sqlalchemy==2.0.35
+fastapi==0.115.2
+uvicorn[standard]==0.30.6

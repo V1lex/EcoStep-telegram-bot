@@ -1,6 +1,6 @@
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_NAME = 'ecostep.db'
 
@@ -36,6 +36,7 @@ def init_db():
             review_comment TEXT,
             reviewed_at TEXT,
             points_awarded INTEGER,
+            co2_saved REAL,
             PRIMARY KEY (user_id, challenge_id),
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         )
@@ -47,6 +48,7 @@ def init_db():
             description TEXT NOT NULL,
             points INTEGER NOT NULL,
             co2 TEXT NOT NULL,
+            co2_quantity_based INTEGER NOT NULL DEFAULT 0,
             active INTEGER NOT NULL DEFAULT 1
         )
     ''')
@@ -96,12 +98,20 @@ def init_db():
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN attachment_name TEXT")
     if 'points_awarded' not in existing_columns:
         cursor.execute("ALTER TABLE user_challenges ADD COLUMN points_awarded INTEGER")
+    if 'co2_saved' not in existing_columns:
+        cursor.execute("ALTER TABLE user_challenges ADD COLUMN co2_saved REAL")
     cursor.execute(
         "UPDATE user_challenges SET review_status = COALESCE(review_status, 'pending')"
     )
     cursor.execute(
         "UPDATE user_challenges SET attachment_type = COALESCE(attachment_type, 'photo')"
     )
+    cursor.execute("PRAGMA table_info(custom_challenges)")
+    custom_columns = {row[1] for row in cursor.fetchall()}
+    if 'co2_quantity_based' not in custom_columns:
+        cursor.execute(
+            "ALTER TABLE custom_challenges ADD COLUMN co2_quantity_based INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
     conn.close()
 
@@ -145,6 +155,29 @@ def get_all_user_ids() -> list[int]:
     ids = [row[0] for row in cursor.fetchall()]
     conn.close()
     return ids
+
+
+def get_user_registration_counts() -> dict[str, int]:
+    """Получить количество пользователей за всё время и за последние 7 дней."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total = cursor.fetchone()[0] or 0
+    threshold = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute(
+        '''
+        SELECT COUNT(*) FROM users
+        WHERE registration_date IS NOT NULL
+          AND registration_date >= ?
+        ''',
+        (threshold,)
+    )
+    weekly = cursor.fetchone()[0] or 0
+    conn.close()
+    return {
+        "total": total,
+        "weekly": weekly,
+    }
 
 
 def find_user_by_username(username: str) -> tuple[int, str | None, str | None] | None:
@@ -684,7 +717,7 @@ def fetch_custom_challenges(active_only: bool = True) -> list[dict]:
     conn = _get_connection()
     cursor = conn.cursor()
     query = '''
-        SELECT id, title, description, points, co2, active
+        SELECT id, title, description, points, co2, co2_quantity_based, active
         FROM custom_challenges
     '''
     if active_only:
@@ -703,7 +736,8 @@ def fetch_custom_challenges(active_only: bool = True) -> list[dict]:
                 "description": row[2],
                 "points": row[3],
                 "co2": row[4],
-                "active": bool(row[5]),
+                "co2_quantity_based": bool(row[5]),
+                "active": bool(row[6]),
             }
         )
     return result
@@ -718,7 +752,7 @@ def get_custom_challenge(challenge_id: str) -> dict | None:
     cursor = conn.cursor()
     cursor.execute(
         '''
-        SELECT id, title, description, points, co2, active
+        SELECT id, title, description, points, co2, co2_quantity_based, active
         FROM custom_challenges
         WHERE id = ?
         ''',
@@ -734,7 +768,8 @@ def get_custom_challenge(challenge_id: str) -> dict | None:
         "description": row[2],
         "points": row[3],
         "co2": row[4],
-        "active": bool(row[5]),
+        "co2_quantity_based": bool(row[5]),
+        "active": bool(row[6]),
     }
 
 
@@ -742,17 +777,18 @@ def create_custom_challenge(
     title: str,
     description: str,
     points: int,
-    co2: str
+    co2: str,
+    co2_quantity_based: bool = False,
 ) -> str:
     """Создать новый кастомный челлендж и вернуть его идентификатор."""
     conn = _get_connection()
     cursor = conn.cursor()
     cursor.execute(
         '''
-        INSERT INTO custom_challenges (title, description, points, co2, active)
-        VALUES (?, ?, ?, ?, 1)
+        INSERT INTO custom_challenges (title, description, points, co2, co2_quantity_based, active)
+        VALUES (?, ?, ?, ?, ?, 1)
         ''',
-        (title, description, points, co2)
+        (title, description, points, co2, 1 if co2_quantity_based else 0)
     )
     challenge_id = cursor.lastrowid
     conn.commit()
@@ -889,20 +925,23 @@ def update_report_review(
     challenge_id: str,
     review_status: str,
     review_comment: str | None = None,
-    awarded_points: int | None = None
+    awarded_points: int | None = None,
+    co2_saved: float | None = None,
 ) -> bool:
     """Обновить статус проверки отчёта."""
     conn = _get_connection()
     cursor = conn.cursor()
     reviewed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     points_value = awarded_points if review_status == 'approved' else None
+    co2_value = co2_saved if review_status == 'approved' else None
     cursor.execute(
         '''
         UPDATE user_challenges
         SET review_status = ?,
             review_comment = ?,
             reviewed_at = ?,
-            points_awarded = ?
+            points_awarded = ?,
+            co2_saved = ?
         WHERE user_id = ? AND challenge_id = ? AND status = 'submitted'
         ''',
         (
@@ -910,6 +949,7 @@ def update_report_review(
             review_comment,
             reviewed_at,
             points_value,
+            co2_value,
             user_id,
             challenge_id,
         )
@@ -926,7 +966,8 @@ def update_report_review(
                 caption = NULL,
                 attachment_type = NULL,
                 attachment_name = NULL,
-                points_awarded = NULL
+                points_awarded = NULL,
+                co2_saved = NULL
             WHERE user_id = ? AND challenge_id = ?
             ''',
             (user_id, challenge_id)
@@ -960,13 +1001,13 @@ def get_user_review_summary(user_id: int) -> dict[str, int]:
     return summary
 
 
-def get_user_awarded_points(user_id: int) -> list[tuple[str, int | None, str | None]]:
-    """Вернуть список одобренных отчётов с начисленными баллами."""
+def get_user_awarded_points(user_id: int) -> list[tuple[str, int | None, str | None, float | None]]:
+    """Вернуть список одобренных отчётов с начисленными баллами и CO₂."""
     conn = _get_connection()
     cursor = conn.cursor()
     cursor.execute(
         '''
-        SELECT challenge_id, points_awarded, reviewed_at
+        SELECT challenge_id, points_awarded, reviewed_at, co2_saved
         FROM user_challenges
         WHERE user_id = ? AND review_status = 'approved'
         ''',

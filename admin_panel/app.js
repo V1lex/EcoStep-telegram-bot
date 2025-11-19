@@ -165,6 +165,24 @@ function renderAdminPanel() {
             </div>
 
             <div class="panel-block">
+                <div class="panel-header">
+                    <h3>Пользователи</h3>
+                    <button type="button" id="refresh-user-stats" class="secondary">Обновить</button>
+                </div>
+                <div class="stats-grid">
+                    <article class="stat-card">
+                        <p class="stat-label">За всё время</p>
+                        <p class="stat-value" id="user-stats-total">-</p>
+                    </article>
+                    <article class="stat-card">
+                        <p class="stat-label">За неделю</p>
+                        <p class="stat-value" id="user-stats-week">-</p>
+                        <p class="stat-hint">Новые регистрации за последние 7 дней</p>
+                    </article>
+                </div>
+            </div>
+
+            <div class="panel-block">
                 <h3>Рассылка</h3>
                 <form id="broadcast-form">
                     <label for="broadcast-message">Текст сообщения</label>
@@ -187,6 +205,11 @@ function renderAdminPanel() {
 
                     <label for="challenge-co2">Экономия CO₂</label>
                     <input id="challenge-co2" type="text" placeholder="Например, 0.2 кг CO₂" required>
+                    <div class="inline-option">
+                        <input type="checkbox" id="challenge-co2-variable">
+                        <label for="challenge-co2-variable" class="inline-label">CO₂ зависит от количества</label>
+                    </div>
+                    <p class="hint small-hint">Если включено, попросим пользователей указывать фактическое количество в отчёте.</p>
 
                     <button type="submit">Добавить задание</button>
                 </form>
@@ -223,10 +246,12 @@ function renderAdminPanel() {
     document.getElementById("logout-btn").addEventListener("click", handleLogout);
     document.getElementById("broadcast-form").addEventListener("submit", handleBroadcast);
     document.getElementById("challenge-form").addEventListener("submit", handleAddChallenge);
+    document.getElementById("refresh-user-stats").addEventListener("click", loadUserStats);
     document.getElementById("refresh-reports").addEventListener("click", loadPendingReports);
     document.getElementById("refresh-challenges").addEventListener("click", loadChallenges);
     document.getElementById("refresh-logs").addEventListener("click", loadLogs);
 
+    loadUserStats();
     loadPendingReports();
     loadChallenges();
     loadLogs();
@@ -270,6 +295,7 @@ async function handleAddChallenge(event) {
     const description = document.getElementById("challenge-description").value.trim();
     const points = Number.parseInt(document.getElementById("challenge-points").value, 10);
     const co2 = document.getElementById("challenge-co2").value.trim();
+    const co2QuantityBased = document.getElementById("challenge-co2-variable").checked;
 
     if (!title || !description || !co2 || Number.isNaN(points) || points <= 0) {
         showMessage("Проверьте корректность полей задания.");
@@ -279,7 +305,7 @@ async function handleAddChallenge(event) {
     try {
         await apiFetch("/challenges", {
             method: "POST",
-            body: JSON.stringify({ title, description, points, co2 }),
+            body: JSON.stringify({ title, description, points, co2, co2_quantity_based: co2QuantityBased }),
         });
         showMessage("Задание добавлено и доступно пользователям.");
         document.getElementById("challenge-form").reset();
@@ -287,6 +313,24 @@ async function handleAddChallenge(event) {
         await loadChallenges();
     } catch (error) {
         showMessage(error.message);
+    }
+}
+
+async function loadUserStats() {
+    const totalEl = document.getElementById("user-stats-total");
+    const weekEl = document.getElementById("user-stats-week");
+    if (!totalEl || !weekEl) {
+        return;
+    }
+    totalEl.textContent = "…";
+    weekEl.textContent = "…";
+    try {
+        const stats = await apiFetch("/stats/users");
+        totalEl.textContent = typeof stats.total_users === "number" ? stats.total_users : "0";
+        weekEl.textContent = typeof stats.weekly_users === "number" ? stats.weekly_users : "0";
+    } catch (error) {
+        totalEl.textContent = "Ошибка";
+        weekEl.textContent = "Ошибка";
     }
 }
 
@@ -308,6 +352,9 @@ async function loadChallenges() {
                 const statusLabel = challenge.active ? "Активно" : "Отключено";
                 const actionLabel = challenge.active ? "Убрать" : "Вернуть";
                 const actionType = challenge.active ? "deactivate" : "activate";
+                const co2Badge = challenge.co2_quantity_based
+                    ? '<span class="badge badge-warning">CO₂ зависит от количества</span>'
+                    : "";
                 return `
                     <article class="challenge-card ${challenge.active ? "" : "inactive"}" data-id="${challenge.challenge_id}">
                         <header>
@@ -316,6 +363,7 @@ async function loadChallenges() {
                         </header>
                         <p>${challenge.description}</p>
                         <p class="meta">Баллы: ${challenge.points} • CO₂: ${challenge.co2}</p>
+                        ${co2Badge ? `<p class="meta-tag">${co2Badge}</p>` : ""}
                         <div class="actions">
                             <button type="button" data-action="${actionType}">${actionLabel}</button>
                             <button type="button" data-action="delete" class="danger">Удалить</button>
@@ -381,7 +429,7 @@ async function loadPendingReports() {
         }
         container.innerHTML = reports
             .map((report) => {
-                let attachmentBlock = "<p>Файл: —</p>";
+                let attachmentBlock = "<p>Файл: -</p>";
                 if (report.file_url && report.attachment_type === "photo") {
                     attachmentBlock = `
                         <figure class="report-media">
@@ -397,16 +445,21 @@ async function loadPendingReports() {
                         </p>
                     `;
                 }
-                const commentText = report.caption || "—";
-                const usernameText = report.username ? `@${report.username}` : "—";
+                const commentText = report.caption || "-";
+                const usernameText = report.username ? `@${report.username}` : "-";
+                const co2Note = report.co2_quantity_based
+                    ? '<p class="note warning">CO₂ зависит от количества - проверь комментарий пользователя.</p>'
+                    : "";
+                const co2ValueAttr = Number.isFinite(report.co2_value) ? report.co2_value : "";
                 return `
-                    <article class="report-card" data-user="${report.user_id}" data-challenge="${report.challenge_id}">
+                    <article class="report-card" data-user="${report.user_id}" data-challenge="${report.challenge_id}" data-co2-value="${co2ValueAttr}" data-co2-quantity="${report.co2_quantity_based}">
                         <header>
                             <strong>${report.challenge_title}</strong>
                             <span>${report.submitted_at}</span>
                         </header>
                         <p>Пользователь: ${report.first_name || "Без имени"} (${usernameText})</p>
                         <p>Комментарий: ${commentText}</p>
+                        ${co2Note}
                         ${attachmentBlock}
                         <div class="actions">
                             <button type="button" data-action="approve">Одобрить</button>
@@ -424,12 +477,32 @@ async function loadPendingReports() {
                 const challengeId = card.dataset.challenge;
                 const decision = event.target.dataset.action === "approve" ? "approved" : "rejected";
                 let comment = null;
+                let co2Saved = null;
                 if (decision === "rejected") {
                     const input = prompt("Укажите причину отклонения (необязательно):", "");
                     if (input === null) {
                         return;
                     }
                     comment = input.trim();
+                } else {
+                    const perUnitValue = Number.parseFloat(card.dataset.co2Value || "");
+                    const isQuantityBased = card.dataset.co2Quantity === "true";
+                    if (isQuantityBased) {
+                        const quantityInput = prompt("Введите количество (в кг), указанное пользователем в отчёте:", "");
+                        if (quantityInput === null) {
+                            return;
+                        }
+                        const quantity = Number.parseFloat(quantityInput.replace(",", "."));
+                        if (Number.isNaN(quantity) || quantity <= 0) {
+                            showMessage("Укажите корректное количество в килограммах.");
+                            return;
+                        }
+                        if (!Number.isNaN(perUnitValue) && perUnitValue > 0) {
+                            co2Saved = Number((perUnitValue * quantity).toFixed(4));
+                        }
+                    } else if (!Number.isNaN(perUnitValue) && perUnitValue > 0) {
+                        co2Saved = Number(perUnitValue.toFixed(4));
+                    }
                 }
                 try {
                     await apiFetch("/reports/resolve", {
@@ -439,6 +512,7 @@ async function loadPendingReports() {
                             challenge_id: challengeId,
                             decision,
                             comment: comment && comment.length ? comment : null,
+                            co2_saved: co2Saved,
                         }),
                     });
                     showMessage("Отчёт обработан.");
@@ -466,7 +540,7 @@ async function loadLogs() {
         container.innerHTML = logs
             .map((log) => {
                 const created = new Date(log.created_at).toLocaleString();
-                return `<li><strong>${created}</strong> — [${log.admin_id ?? "?"}] ${log.action}${log.details ? ` (${log.details})` : ""}</li>`;
+                return `<li><strong>${created}</strong> - [${log.admin_id ?? "?"}] ${log.action}${log.details ? ` (${log.details})` : ""}</li>`;
             })
             .join("");
     } catch (error) {
