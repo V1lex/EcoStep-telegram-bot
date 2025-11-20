@@ -4,6 +4,8 @@ const yearLabel = document.getElementById("year");
 const STORAGE_TOKEN_KEY = "ecostep_admin_token";
 const STORAGE_ADMIN_ID_KEY = "ecostep_admin_id";
 const API_BASE = `${window.location.origin}/api`;
+const MIN_TITLE_LENGTH = 3;
+const MIN_DESCRIPTION_LENGTH = 4;
 
 const state = {
     token: localStorage.getItem(STORAGE_TOKEN_KEY),
@@ -44,6 +46,16 @@ function showMessage(text) {
     }
 }
 
+function mapFieldName(field) {
+    const mapping = {
+        title: "Название",
+        description: "Описание",
+        points: "Баллы",
+        co2: "CO₂",
+    };
+    return mapping[field] || field;
+}
+
 function formatErrorDetails(details) {
     if (!details) {
         return null;
@@ -61,7 +73,22 @@ function formatErrorDetails(details) {
                     return item;
                 }
                 if (item.msg && item.loc) {
-                    return `${item.loc.join(" › ")}: ${item.msg}`;
+                    const field = item.loc[item.loc.length - 1];
+                    const fieldLabel = mapFieldName(field);
+                    let message = item.msg;
+                    if (/at least (\\d+)/i.test(item.msg)) {
+                        const match = /at least (\\d+)/i.exec(item.msg);
+                        if (match) {
+                            message = `не короче ${match[1]} символов`;
+                        }
+                    }
+                    if (/at most (\\d+)/i.test(item.msg)) {
+                        const match = /at most (\\d+)/i.exec(item.msg);
+                        if (match) {
+                            message = `не длиннее ${match[1]} символов`;
+                        }
+                    }
+                    return `${fieldLabel}: ${message}`;
                 }
                 if (item.msg) {
                     return item.msg;
@@ -341,6 +368,14 @@ async function handleAddChallenge(event) {
 
     if (!title || !description || !co2 || Number.isNaN(points) || points <= 0) {
         showMessage("Проверьте корректность полей задания.");
+        return;
+    }
+    if (title.length < MIN_TITLE_LENGTH) {
+        showMessage(`Название должно быть не короче ${MIN_TITLE_LENGTH} символов.`);
+        return;
+    }
+    if (description.length < MIN_DESCRIPTION_LENGTH) {
+        showMessage(`Описание должно быть не короче ${MIN_DESCRIPTION_LENGTH} символов.`);
         return;
     }
 
