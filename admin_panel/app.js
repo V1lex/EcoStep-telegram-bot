@@ -44,6 +44,48 @@ function showMessage(text) {
     }
 }
 
+function formatErrorDetails(details) {
+    if (!details) {
+        return null;
+    }
+    if (typeof details === "string") {
+        return details;
+    }
+    if (Array.isArray(details)) {
+        const messages = details
+            .map((item) => {
+                if (!item) {
+                    return null;
+                }
+                if (typeof item === "string") {
+                    return item;
+                }
+                if (item.msg && item.loc) {
+                    return `${item.loc.join(" › ")}: ${item.msg}`;
+                }
+                if (item.msg) {
+                    return item.msg;
+                }
+                return null;
+            })
+            .filter(Boolean);
+        if (messages.length) {
+            return messages.join("\n");
+        }
+    }
+    if (typeof details === "object") {
+        if (details.message) {
+            return details.message;
+        }
+        try {
+            return JSON.stringify(details);
+        } catch {
+            return String(details);
+        }
+    }
+    return String(details);
+}
+
 function initPasswordToggles(container = document) {
     container.querySelectorAll(".password-toggle").forEach((button) => {
         const targetId = button.dataset.target;
@@ -82,9 +124,9 @@ async function apiFetch(path, options = {}) {
         let details = "Ошибка запроса.";
         try {
             const data = await response.json();
-            details = data.detail || details;
+            details = formatErrorDetails(data.detail ?? data) || details;
         } catch {
-            details = await response.text();
+            details = formatErrorDetails(await response.text()) || details;
         }
         throw new Error(details);
     }

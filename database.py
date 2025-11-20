@@ -1,14 +1,36 @@
+import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from pathlib import Path
 
-DB_NAME = 'ecostep.db'
+DB_NAME = os.getenv("ECOSTEP_DB_PATH", "ecostep.db")
 
 
 def _get_connection() -> sqlite3.Connection:
     """Создать подключение к базе."""
-    conn = sqlite3.connect(DB_NAME)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     return conn
+
+
+def _resolve_db_path() -> Path:
+    """
+    Определить абсолютный путь до БД.
+
+    Без привязки к текущей рабочей директории, чтобы при перезапуске/релоде
+    не создавались новые базы и не слетала статистика пользователей.
+    """
+    path = Path(DB_NAME)
+    if path.is_absolute():
+        return path
+    return Path(__file__).resolve().parent / path
+
+
+def get_db_path() -> str:
+    """Вернуть строковый путь до актуальной БД (используется в тестах/утилитах)."""
+    return str(_resolve_db_path())
 
 
 def init_db():

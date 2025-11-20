@@ -16,12 +16,13 @@ class TestDatabase:
         
         # Инициализируем БД
         init_db()
-        
+
+        db_file = get_db_path()
         yield  # здесь выполняются тесты
         
         # Очистка после теста
-        if os.path.exists(DB_NAME):
-            os.remove(DB_NAME)
+        if os.path.exists(db_file):
+            os.remove(db_file)
     
     def test_db_connection(self):
         """Тест подключения к БД"""
@@ -321,9 +322,10 @@ def quick_test():
         
     finally:
         # Восстанавливаем оригинальную БД и чистим тестовую
+        test_db_path = get_db_path()
         DB_NAME = original_db
-        if os.path.exists('quick_test.db'):
-            os.remove('quick_test.db')
+        if os.path.exists(test_db_path):
+            os.remove(test_db_path)
 
 
 if __name__ == "__main__":
