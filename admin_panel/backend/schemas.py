@@ -19,7 +19,7 @@ class BroadcastRequest(BaseModel):
 
 class ChallengeCreateRequest(BaseModel):
     title: str = Field(..., min_length=3, max_length=120)
-    description: str = Field(..., min_length=10, max_length=1024)
+    description: str = Field(..., min_length=4, max_length=1024)
     points: int = Field(..., ge=1, le=500)
     co2: str = Field(..., min_length=1, max_length=64)
     co2_quantity_based: bool = Field(False, description="CO₂ зависит от количества")
