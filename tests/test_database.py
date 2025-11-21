@@ -2,7 +2,7 @@ import pytest
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import *  # импортируй все функции из твоего файла
+from database import *
 from database import _get_connection
 
 class TestDatabase:
@@ -12,13 +12,12 @@ class TestDatabase:
     def setup_and_teardown(self):
         """Создаем и очищаем базу перед каждым тестом"""
         global DB_NAME
-        DB_NAME = 'test_ecostep.db'  # Используем тестовую БД
+        DB_NAME = 'test_ecostep.db'
         
-        # Инициализируем БД
         init_db()
 
         db_file = get_db_path()
-        yield  # здесь выполняются тесты
+        yield
         
         # Очистка после теста
         if os.path.exists(db_file):
@@ -313,7 +312,6 @@ def quick_test():
         print("Отправка отчета - OK")
         
         # Тест кастомных челленджей
-        challenge_id = create_custom_challenge("Test", "Desc", 50, "5kg")
         challenges = fetch_custom_challenges()
         assert len(challenges) > 0
         print("Кастомные челленджи - OK")
