@@ -1,74 +1,160 @@
 # EcoStep Telegram Bot
 
-EcoStep помогает студентам МАИ и молодёжи формировать экологичные привычки через Telegram. Бот предоставляет список челленджей, собирает отчёты, ведёт рейтинг друзей и даёт администраторам инструменты модерации через mini app на базе FastAPI.
+EcoStep — Telegram‑бот для экопривычек: пользователи берут челленджи, отправляют отчёты, видят прогресс и лидерборды; администраторы управляют заданиями и модерируют отчёты через веб‑интерфейс (мини‑приложение) на FastAPI.
 
-## Возможности
-- **Библиотека челленджей**: предустановленные сценарии и кастомные задания из `settings/challenges.py` и админ-панели.
-- **Отчёты с медиа**: пользователи отправляют фото/видео, бот фиксирует статус в SQLite (`database.py`) и передаёт задания на проверку.
-- **Рейтинг друзей**: система друзей и лидербордов хранится в таблицах `user_friends` и `friend_requests`.
-- **Аналитика и напоминания**: отдельные роутеры в `bot_routes/` отвечают за статистику, уведомления и взаимодействие с пользователем.
-- **Админ-инструменты**: FastAPI-приложение в `admin_panel/backend` позволяет управлять челленджами, рассылками и отчётами.
+## Основные возможности
+- Челленджи: список, принятие, отправка отчётов (фото/текст), баллы и CO₂.
+- Соц. функции: друзья, уведомления, лидерборд по друзьям.
+- Админка: логин, CRUD челленджей (включая кастомные), модерация отчётов, рассылки, логи.
+- Хранение: SQLite (по умолчанию файл `ecostep.db`, путь настраивается).
 
-## Структура репозитория
-| Путь | Содержание |
+## Структура
+| Часть | Описание |
 | --- | --- |
-| `run.py`, `bot_core.py` | Точка входа бота и инициализация `aiogram` 3.x |
-| `bot_routes/` | Роутеры: приветствие (`start.py`), аналитика (`analytics.py`), работа с друзьями и челленджами |
-| `database.py` | Все операции с SQLite, включая регистрацию пользователей, отчёты и логи админов |
-| `settings/` | Настройки челленджей, администраторов и других констант |
-| `bot_keyboards/` | Reply/inline-клавиатуры, включая mini app для админов |
-| `admin_panel/` | FastAPI backend (`backend/`) и статика mini app (`index.html`, `app.js`) |
-| `assets/` | Баннера и статические изображения для сообщений |
-| `support_tools/` | Вспомогательные функции, команды и утилиты |
-| `tests/` | Pytest-тесты для БД и бизнес-логики |
-| `roadmap.md` | Планы и приоритеты команды |
+| `run.py`, `bot_core.py` | Точка входа бота (Aiogram 3) |
+| `bot_routes/` | Маршруты бота: старт, аналитика/челленджи, друзья, отчёты |
+| `bot_keyboards/` | Reply/inline‑клавиатуры, ссылки на WebApp |
+| `database.py` | Работа с SQLite, миграции и CRUD |
+| `settings/` | Админы, челленджи (конфиг/кэш) |
+| `admin_panel/backend/` | FastAPI backend админки (`main.py`, схемы) |
+| `admin_panel/` | Фронт мини‑приложения (HTML/JS/CSS) |
+| `assets/` | Баннеры и медиа |
+| `support_tools/` | Команды бота, подсказки, утилиты |
+| `tests/` | Pytest для базы |
+| `roadmap.md` | План развития |
 
-## Быстрый старт
-### Предварительные требования
-- Python 3.11+ (проект разрабатывается на 3.12)
-- Установленный `pip`
-- Токен Telegram-бота (BotFather)
+## Требования
+- Python 3.11+ (работает и на 3.12)
+- pip
+- Токен Telegram‑бота (BotFather)
 
-### Установка
+## Установка (локально или на чистом сервере)
 ```bash
-git clone https://github.com/v1lex/EcoStep-telegram-bot.git
+git clone https://github.com/V1lex/EcoStep-telegram-bot.git
 cd EcoStep-telegram-bot
+
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate       # Windows: .\.venv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Создайте файл `.env` рядом с `run.py` и добавьте значения:
+Создай `.env` (можно скопировать из примера, если появится):
+```env
+BOT_TOKEN=123456:ABCDEF                  # токен бота
+ADMIN_IDS=11111111,22222222             # список админов (ID)
+# либо/и ADMIN_CREDENTIALS=id:password,id:password
+ADMIN_PANEL_PASSWORD=supersecret        # общий пароль (если не используешь пары id:pass)
+ADMIN_WEBAPP_URL=https://your-mini-app  # URL мини‑приложения
+# опционально путь к БД:
+ECOSTEP_DB_PATH=/var/lib/ecostep/ecostep.db
+```
+
+## Быстрый запуск для проверки
+Открой два терминала (оба в корне проекта, с активным venv):
+- Бот: `python run.py`
+- Админка: `uvicorn admin_panel.backend.main:get_app --factory --host 127.0.0.1 --port 8001`
+
+Админ‑панель будет доступна на `http://127.0.0.1:8001` (WebApp можно открыть прямо в браузере для проверки).
+
+## Деплой (пример: /opt/ecostep + systemd)
+```bash
+ssh ubuntu@your_server_ip
+sudo mkdir -p /opt/ecostep && sudo chown ubuntu:ubuntu /opt/ecostep
+cd /opt/ecostep
+git clone https://github.com/V1lex/EcoStep-telegram-bot.git .
+
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+cp .env.example .env  # если файла нет — создай .env по шаблону выше
+nano .env             # заполни реальные BOT_TOKEN, ADMIN_IDS/ADMIN_CREDENTIALS, ADMIN_PANEL_PASSWORD, ADMIN_WEBAPP_URL, ECOSTEP_DB_PATH
+```
+
+### systemd unit‑файлы
+`/etc/systemd/system/ecostep-bot.service`
 ```ini
-BOT_TOKEN=123456:ABCDEF
-# один из способов указать админов:
-ADMIN_IDS=11111111,22222222
-ADMIN_PANEL_PASSWORD=supersecret
-ADMIN_WEBAPP_URL=https://your-mini-app-host
-# или в формате id:пароль
-ADMIN_CREDENTIALS=11111111:supersecret,22222222:anotherpass
+[Unit]
+Description=EcoStep Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ecostep
+EnvironmentFile=/opt/ecostep/.env
+ExecStart=/opt/ecostep/venv/bin/python run.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Запуск бота
-```bash
-python run.py
-```
-После запуска бот создаст `ecostep.db`, настройит команды (см. `support_tools/bot_commands.py`) и начнёт polling. Пользователи регистрируются автоматически при первом сообщении благодаря middleware в `run.py`.
+`/etc/systemd/system/admin-webapp.service`
+```ini
+[Unit]
+Description=EcoStep Admin WebApp (FastAPI)
+After=network.target
 
-### Запуск админской mini app
-Backend использует FastAPI и запускается как фабрика приложения:
-```bash
-uvicorn admin_panel.backend.main:get_app --factory --reload --port 8000
-```
-Статический интерфейс (`admin_panel/index.html`) можно открыть из любой статики или раздать через тот же сервер, если потребуется.
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ecostep/admin_panel/backend
+EnvironmentFile=/opt/ecostep/.env
+ExecStart=/opt/ecostep/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001
+Restart=on-failure
+RestartSec=10
 
-## Тестирование
-В проекте есть pytest-тесты для БД (`tests/test_database.py`). После установки зависимостей запускайте тесты из корня проекта с активированным виртуальным окружением:
+[Install]
+WantedBy=multi-user.target
+```
+
+Запуск и автозапуск:
 ```bash
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+sudo systemctl daemon-reload
+sudo systemctl enable ecostep-bot admin-webapp
+sudo systemctl start ecostep-bot admin-webapp
+sudo systemctl status ecostep-bot admin-webapp
+```
+
+Логи:
+```bash
+journalctl -u ecostep-bot -n 50 --no-pager
+journalctl -u admin-webapp -n 50 --no-pager
+journalctl -u ecostep-bot -u admin-webapp -f   # realtime
+```
+
+## Nginx (по желанию, чтобы отдать админку по домену)
+```nginx
+server {
+    listen 80;
+    server_name ecostepadmin.ru;
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+Активировать: `sudo ln -s /etc/nginx/sites-available/ecostep-admin /etc/nginx/sites-enabled/` → `sudo nginx -t` → `sudo systemctl restart nginx`. Для HTTPS добавь certbot.
+
+## Тесты
+```bash
+source .venv/bin/activate
 pytest
 ```
-Тесты автоматически создают отдельную SQLite-базу (`test_ecostep.db`), рабочие данные не трогаются.
 
-## Дополнительные материалы
-- `roadmap.md`: планы и приоритеты команды.
+## Обновление версии
+```bash
+ssh ubuntu@your_server_ip
+cd /opt/ecostep
+git pull
+source venv/bin/activate
+pip install -r requirements.txt  # если менялся requirements.txt
+sudo systemctl restart ecostep-bot admin-webapp
+```
